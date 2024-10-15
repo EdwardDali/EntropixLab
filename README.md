@@ -6,7 +6,9 @@ qwen2.5-0.5b-instruct-q5_k_m.gguf
 Welcome to the interactive AI assistant!
 You can enter prompts, and the AI will generate responses.
 Type 'quit' to exit the program.
-Enter your prompt (or 'quit' to exit): Compare the numbers 1.11 and 1.9. Which one is greater? Explain your reasoning step by step.
+Enter your prompt (or 'quit' to exit): 
+
+Compare the numbers 1.11 and 1.9. Which one is greater? Explain your reasoning step by step.
 2024-10-15 18:19:50,317 - INFO - Generating response for prompt: Compare the numbers 1.11 and 1.9. Which one is greater? Explain your reasoning step by step.
 Generating response for prompt: 'Compare the numbers 1.11 and 1.9. Which one is greater? Explain your reasoning step by step.'
 Generating tokens...
