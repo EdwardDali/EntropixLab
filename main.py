@@ -189,7 +189,7 @@ class VarentropyLogitsProcessor(LogitsProcessor):
                     return True
         return False
 
-def generate_response(model, prompt, max_tokens=1000):
+def generate_response(model, prompt, max_tokens=None):
     cfg = SamplerConfig()
     
     logits_processor = VarentropyLogitsProcessor(cfg)
@@ -203,20 +203,36 @@ def generate_response(model, prompt, max_tokens=1000):
     # Use default parameters for initial generation
     default_params = cfg.strategy_params[SamplerState.SAMPLE]
     
-    output = model(
-        prompt,
-        max_tokens=max_tokens,
-        logits_processor=logits_processors,
-        echo=False,
-        temperature=default_params['temperature'],
-        top_p=default_params['top_p'],
-        top_k=default_params['top_k'],
-    )
+    # Set up the generation parameters
+    generation_params = {
+        "prompt": prompt,
+        "max_tokens": max_tokens,  # Set to None for unlimited generation
+        "logits_processor": logits_processors,
+        "echo": False,
+        "temperature": default_params['temperature'],
+        "top_p": default_params['top_p'],
+        "top_k": default_params['top_k'],
+        "stream": True,  # Enable streaming for token-by-token generation
+    }
     
-    generated_text = output['choices'][0]['text']
+    generated_text = ""
+    try:
+        for output in model(**generation_params):
+            token = output['choices'][0]['text']
+            generated_text += token
+            print(token, end='', flush=True)
+            
+            # Check for a stopping condition (e.g., special token or user input)
+            if '[STOP]' in generated_text:
+                break
+            
+            # Optionally, you can add a way for the user to interrupt generation
+            # For example, checking for a keypress (requires additional setup)
+    except KeyboardInterrupt:
+        print("\nGeneration interrupted by user.")
     
     total_time = time.time() - start_time
-    print(f"\nGeneration completed in {total_time:.2f} seconds.")
+    print(f"\n\nGeneration completed in {total_time:.2f} seconds.")
     
     # Print the strategy distribution
     total_tokens = sum(logits_processor.strategy_counter.values())
@@ -248,7 +264,7 @@ def main():
     try:
         model = Llama(
             model_path=model_path,
-            n_ctx=2048,
+            n_ctx=8192,  # Increase context size to allow for longer generations
             n_gpu_layers=-1,
             verbose=False
         )
@@ -256,8 +272,9 @@ def main():
         logger.error(f"Error loading model: {str(e)}")
         return
     
-    print("Welcome to the interactive AI assistant!")
+    print("Welcome to the interactive AI assistant with unlimited token generation!")
     print("You can enter prompts, and the AI will generate responses.")
+    print("The generation will continue until you interrupt it or a stop condition is met.")
     print("Type 'quit' to exit the program.")
     
     while True:
@@ -266,7 +283,7 @@ def main():
             break
         
         logger.info(f"Generating response for prompt: {prompt}")
-        response = generate_response(model, prompt)
+        response = generate_response(model, prompt, max_tokens=None)  # Set max_tokens to None for unlimited generation
         
         print(f"\nPrompt: {prompt}")
         print(f"Generated response: {response}")
