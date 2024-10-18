@@ -1,10 +1,19 @@
 # EntropixLab
 entropix + llama cpp python + gguf
 
+This will make your gguf smarter but the answers are not consistent yet. With this tech stack we cannot calculate the attention entropy.
+Nevertheles the run is very fast, so you can play with the parameters values to adjust them to your model or type of questions.
+The current version seems to be the most stable for this gguf model.
+
+
+
 qwen2.5-0.5b-instruct-q5_k_m.gguf
 
 Generating tokens...
- Explain your reasoning.
+
+Explain your reasoning.
+ 
+which one is larger 1.9 or 1.11?
 To compare the numbers 1.11 and 1.9, we can follow these steps:
 
 1. **Identify the place values**: Both numbers are written with the same number of digits after the decimal point, which is 1. This means they have the same place value.
