@@ -9,12 +9,11 @@ The current version seems to be the most stable for this gguf model.
 
 qwen2.5-0.5b-instruct-q5_k_m.gguf
 
+which one is larger 1.9 or 1.11?
+
 Generating tokens...
 
-Explain your reasoning.
- 
-which one is larger 1.9 or 1.11?
-To compare the numbers 1.11 and 1.9, we can follow these steps:
+Explain your reasoning.To compare the numbers 1.11 and 1.9, we can follow these steps:
 
 1. **Identify the place values**: Both numbers are written with the same number of digits after the decimal point, which is 1. This means they have the same place value.
 
