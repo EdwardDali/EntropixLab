@@ -6,7 +6,6 @@ import os
 from enum import Enum
 from typing import List, Tuple, Optional, Dict
 import time
-import numpy as np
 from collections import Counter, deque
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -31,7 +30,6 @@ class SamplerState(Enum):
 
 class SamplerConfig:
     def __init__(self, tokenizer=None):
-        # Updated values to match sampler.py
         self.temp = 0.666
         self.top_p = 0.90
         self.top_k = 27
@@ -69,8 +67,8 @@ class SamplerConfig:
         self.ada_score_agree = 0.5
         self.ada_score_int = 0.6
 
-        # Additional parameters from the original main_t.py
         self.cot_token = tokenizer.encode("[COT]", add_special_tokens=False)[0] if tokenizer else None
+        self.clarifying_question_token = tokenizer.encode("?", add_special_tokens=False)[0] if tokenizer else None
         self.repetition_penalty = 1.2
         self.max_ngram_size = 5
         self.max_ngram_repeat = 3
@@ -97,14 +95,13 @@ class EntropixSampler:
         self.sliding_window = 100
 
     def sample(self, logits: torch.Tensor, attention: torch.Tensor) -> Tuple[torch.Tensor, SamplerState]:
-        entropy, varentropy = self.calculate_varentropy_logsoftmax(logits)
-        attention_entropy = self.calculate_attention_entropy(attention)
+        metrics = self.calculate_metrics(logits, attention)
         
-        self.entropy_window.append(entropy.item())
-        self.varentropy_window.append(varentropy.item())
-        self.attention_entropy_window.append(attention_entropy.item())
-        self.long_entropy_window.append(entropy.item())
-        self.long_varentropy_window.append(varentropy.item())
+        self.entropy_window.append(metrics["logits_entropy"])
+        self.varentropy_window.append(metrics["logits_varentropy"])
+        self.attention_entropy_window.append(metrics["attn_entropy"])
+        self.long_entropy_window.append(metrics["logits_entropy"])
+        self.long_varentropy_window.append(metrics["logits_varentropy"])
         
         avg_entropy = self.weighted_average(self.entropy_window, self.config.decay_factor)
         avg_varentropy = self.weighted_average(self.varentropy_window, self.config.decay_factor)
@@ -120,17 +117,17 @@ class EntropixSampler:
         if self.current_strategy == SamplerState.ARGMAX:
             sampled_token = torch.argmax(logits[:, -1], dim=-1, keepdim=True)
         elif self.current_strategy == SamplerState.INSERT_COT:
-            if self.config.cot_token not in self.recent_tokens:
-                sampled_token = torch.tensor([[self.config.cot_token]], device=logits.device)
+            if self.config.clarifying_question_token not in self.recent_tokens:
+                sampled_token = torch.tensor([[self.config.clarifying_question_token]], device=logits.device)
             else:
                 temp_adj = self.config.helv_attn_ent_offset + self.config.helv_attn_ent_coef * avg_attention_entropy
                 sampled_token = self._sample(logits, temperature=min(1.5, self.config.temp * temp_adj))
         elif self.current_strategy == SamplerState.RESAMPLE:
-            temp_adj = self.config.lehv_interaction_strength_offset + self.config.lehv_interaction_strength_coef * self.calculate_interaction_strength(attention)
-            top_k_adj = max(5, int(self.config.top_k * (1 + 0.5 * (1 - self.calculate_agreement(attention)))))
+            temp_adj = self.config.lehv_interaction_strength_offset + self.config.lehv_interaction_strength_coef * metrics["interaction_strength"]
+            top_k_adj = max(5, int(self.config.top_k * (1 + 0.5 * (1 - metrics["agreement"]))))
             sampled_token = self._sample(logits, temperature=min(1.5, self.config.temp * temp_adj), top_k=top_k_adj)
         elif self.current_strategy == SamplerState.ADAPTIVE:
-            sampled_token = self._adaptive_sample(logits, attention)
+            sampled_token = self._adaptive_sample(logits, metrics)
         else:  # SamplerState.SAMPLE
             sampled_token = self._sample(logits)
         
@@ -173,17 +170,39 @@ class EntropixSampler:
         return entropy, varentropy
 
     def calculate_attention_entropy(self, attention: torch.Tensor) -> torch.Tensor:
-        attention = attention.mean(dim=1)
-        attention_probs = attention / attention.sum(dim=-1, keepdim=True)
-        entropy = -torch.sum(attention_probs * torch.log2(attention_probs + 1e-10), dim=-1)
-        return entropy.mean()
+        attention_probs = F.softmax(attention, dim=-1)
+        entropy = -torch.sum(attention_probs * torch.log2(torch.clamp(attention_probs, min=1e-10)), dim=-1)
+        return entropy.mean(dim=1)  # Average over attention heads
+
+    def calculate_attention_varentropy(self, attention: torch.Tensor) -> torch.Tensor:
+        attention_entropy = self.calculate_attention_entropy(attention)
+        return torch.var(attention_entropy)  # Variance across all dimensions
 
     def calculate_interaction_strength(self, attention: torch.Tensor) -> torch.Tensor:
         return torch.mean(torch.abs(attention))
 
     def calculate_agreement(self, attention: torch.Tensor) -> torch.Tensor:
-        mean_attention = torch.mean(attention, dim=1)
-        return 1 - torch.mean(torch.abs(attention - mean_attention.unsqueeze(1)))
+        attention_probs = F.softmax(attention, dim=-1)
+        mean_attention = torch.mean(attention_probs, dim=1, keepdim=True)
+        return 1 - torch.mean(torch.abs(attention_probs - mean_attention))
+
+    def calculate_metrics(self, logits: torch.Tensor, attention: torch.Tensor) -> Dict[str, float]:
+        entropy, varentropy = self.calculate_varentropy_logsoftmax(logits)
+        attn_entropy = self.calculate_attention_entropy(attention)
+        attn_varentropy = self.calculate_attention_varentropy(attention)
+        agreement = self.calculate_agreement(attention)
+        interaction_strength = self.calculate_interaction_strength(attention)
+
+        return {
+            "logits_entropy": entropy.mean().item(),
+            "logits_varentropy": varentropy.mean().item(),
+            "attn_entropy": attn_entropy.mean().item(),
+            "attn_varentropy": attn_varentropy.item(),  # Now a scalar
+            "agreement": agreement.item(),
+            "interaction_strength": interaction_strength.item(),
+            "logits_uncertainty": entropy.mean().item() + varentropy.mean().item(),
+            "attn_uncertainty": attn_entropy.mean().item() + attn_varentropy.item()
+        }
 
     def _sample(self, logits: torch.Tensor, temperature: float = None, top_p: float = None, top_k: int = None, min_p: float = None) -> torch.Tensor:
         temperature = temperature or self.config.temp
@@ -216,9 +235,7 @@ class EntropixSampler:
         except RuntimeError:
             return torch.argmax(probs).unsqueeze(0)
 
-    def _adaptive_sample(self, logits: torch.Tensor, attention: torch.Tensor) -> torch.Tensor:
-        metrics = self.calculate_metrics(logits, attention)
-        
+    def _adaptive_sample(self, logits: torch.Tensor, metrics: Dict[str, float]) -> torch.Tensor:
         temperature = self.config.temp * (1 + self.config.ada_temp_logits * metrics["logits_uncertainty"] + 
                                           self.config.ada_temp_attn * metrics["attn_uncertainty"] - 
                                           self.config.ada_temp_agree * metrics["agreement"])
@@ -235,25 +252,6 @@ class EntropixSampler:
         sample_scores = [self.score_sample(sample, logits, metrics) for sample in samples]
         best_sample_idx = torch.argmax(torch.tensor(sample_scores))
         return samples[best_sample_idx]
-
-    def calculate_metrics(self, logits: torch.Tensor, attention: torch.Tensor) -> Dict[str, float]:
-        entropy, varentropy = self.calculate_varentropy_logsoftmax(logits)
-        attn_entropy = self.calculate_attention_entropy(attention)
-        attn_varentropy = torch.var(attn_entropy)
-        agreement = self.calculate_agreement(attention)
-        interaction_strength = self.calculate_interaction_strength(attention)
-
-        return {
-            "logits_entropy": entropy.mean().item(),
-            "logits_varentropy": varentropy.mean().item(),
-            "attn_entropy": attn_entropy.item(),
-            "attn_varentropy": attn_varentropy.item(),
-            "agreement": agreement.item(),
-            "interaction_strength": interaction_strength.item(),
-            "logits_uncertainty": entropy.mean().item() + varentropy.mean().item(),
-            "attn_uncertainty": attn_entropy.item() + attn_varentropy.item()
-        }
-
     def score_sample(self, sample: torch.Tensor, logits: torch.Tensor, metrics: Dict[str, float]) -> float:
         log_prob = F.log_softmax(logits, dim=-1)[0, sample.item()].item()
         confidence_score = (
