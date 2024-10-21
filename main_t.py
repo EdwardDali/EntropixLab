@@ -115,20 +115,25 @@ class EntropixSampler:
         self.current_strategy = self.determine_strategy(combined_entropy, combined_varentropy, avg_attention_entropy)
         
         if self.current_strategy == SamplerState.ARGMAX:
+            # Low Entropy, Low Varentropy: Confident and consistent predictions
             sampled_token = torch.argmax(logits[:, -1], dim=-1, keepdim=True)
         elif self.current_strategy == SamplerState.INSERT_COT:
+            # High Entropy, Low Varentropy: Uncertain but consistent, possibly needs clarification
             if self.config.clarifying_question_token not in self.recent_tokens:
                 sampled_token = torch.tensor([[self.config.clarifying_question_token]], device=logits.device)
             else:
                 temp_adj = self.config.helv_attn_ent_offset + self.config.helv_attn_ent_coef * avg_attention_entropy
                 sampled_token = self._sample(logits, temperature=min(1.5, self.config.temp * temp_adj))
         elif self.current_strategy == SamplerState.RESAMPLE:
+            # Low Entropy, High Varentropy: Confident but inconsistent, explore alternatives
             temp_adj = self.config.lehv_interaction_strength_offset + self.config.lehv_interaction_strength_coef * metrics["interaction_strength"]
             top_k_adj = max(5, int(self.config.top_k * (1 + 0.5 * (1 - metrics["agreement"]))))
             sampled_token = self._sample(logits, temperature=min(1.5, self.config.temp * temp_adj), top_k=top_k_adj)
         elif self.current_strategy == SamplerState.ADAPTIVE:
+            # High Entropy, High Varentropy: Highly uncertain and inconsistent, need careful sampling
             sampled_token = self._adaptive_sample(logits, metrics)
         else:  # SamplerState.SAMPLE
+            # Medium Entropy, Medium Varentropy: Standard sampling
             sampled_token = self._sample(logits)
         
         self.strategy_counter[self.current_strategy.name] += 1
@@ -197,7 +202,7 @@ class EntropixSampler:
             "logits_entropy": entropy.mean().item(),
             "logits_varentropy": varentropy.mean().item(),
             "attn_entropy": attn_entropy.mean().item(),
-            "attn_varentropy": attn_varentropy.item(),  # Now a scalar
+            "attn_varentropy": attn_varentropy.item(),
             "agreement": agreement.item(),
             "interaction_strength": interaction_strength.item(),
             "logits_uncertainty": entropy.mean().item() + varentropy.mean().item(),
@@ -210,30 +215,40 @@ class EntropixSampler:
         top_k = top_k or self.config.top_k
         min_p = min_p or self.config.min_p
 
-        probs = F.softmax(logits / temperature, dim=-1)
-
-        if min_p > 0.0:
-            p_max = torch.max(probs)
-            probs[probs < (min_p * p_max)] = 0
-            probs = probs / probs.sum()
-
-        top_k_probs, top_k_indices = torch.topk(probs, k=min(top_k, probs.shape[-1]))
+        # Ensure logits is 2D: (batch_size, vocab_size)
+        if logits.dim() == 3:
+            logits = logits[:, -1, :]
+        elif logits.dim() == 1:
+            logits = logits.unsqueeze(0)
         
-        cumulative_probs = torch.cumsum(top_k_probs, dim=-1)
-        probs_to_keep = cumulative_probs <= top_p
-        if not probs_to_keep.any():
-            probs_to_keep[-1] = True
-        top_k_probs = top_k_probs[probs_to_keep]
-        top_k_indices = top_k_indices[probs_to_keep]
+        # Apply temperature
+        logits = logits / temperature
 
-        if top_k_probs.sum() <= 0:
-            return torch.argmax(probs).unsqueeze(0)
+        # Apply min_p
+        if min_p > 0.0:
+            sorted_logits, _ = torch.sort(logits, descending=True, dim=-1)
+            cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+            sorted_indices_to_remove = cumulative_probs > (1 - min_p)
+            sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+            sorted_indices_to_remove[..., 0] = 0
+            indices_to_remove = sorted_indices_to_remove.scatter(dim=1, index=torch.argsort(logits, descending=True), src=sorted_indices_to_remove)
+            logits = logits.masked_fill(indices_to_remove, float('-inf'))
 
-        try:
-            sample = torch.multinomial(top_k_probs, num_samples=1)
-            return top_k_indices[sample]
-        except RuntimeError:
-            return torch.argmax(probs).unsqueeze(0)
+        # Apply top-k
+        top_k = min(top_k, logits.size(-1))  # Safety check
+        top_k_logits, top_k_indices = torch.topk(logits, k=top_k, dim=-1)
+        
+        # Apply top-p
+        cumulative_probs = torch.cumsum(F.softmax(top_k_logits, dim=-1), dim=-1)
+        sorted_indices_to_remove = cumulative_probs > top_p
+        sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+        sorted_indices_to_remove[..., 0] = 0
+        top_k_logits = top_k_logits.masked_fill(sorted_indices_to_remove, float('-inf'))
+
+        # Sample
+        probs = F.softmax(top_k_logits, dim=-1)
+        sample = torch.multinomial(probs, num_samples=1)
+        return top_k_indices.gather(-1, sample)
 
     def _adaptive_sample(self, logits: torch.Tensor, metrics: Dict[str, float]) -> torch.Tensor:
         temperature = self.config.temp * (1 + self.config.ada_temp_logits * metrics["logits_uncertainty"] + 
@@ -252,6 +267,7 @@ class EntropixSampler:
         sample_scores = [self.score_sample(sample, logits, metrics) for sample in samples]
         best_sample_idx = torch.argmax(torch.tensor(sample_scores))
         return samples[best_sample_idx]
+
     def score_sample(self, sample: torch.Tensor, logits: torch.Tensor, metrics: Dict[str, float]) -> float:
         log_prob = F.log_softmax(logits, dim=-1)[0, sample.item()].item()
         confidence_score = (
@@ -293,7 +309,7 @@ def generate_response(model, tokenizer, prompt, max_tokens=1000):
     for i in range(max_tokens):
         with torch.no_grad():
             outputs = model(input_ids, attention_mask=attention_mask, output_attentions=True)
-            logits = outputs.logits[:, -1, :]
+            logits = outputs.logits[:, -1, :]  # No need to unsqueeze
             attention = outputs.attentions[-1]
             
             sampled_token, state = sampler.sample(logits, attention)
@@ -311,7 +327,7 @@ def generate_response(model, tokenizer, prompt, max_tokens=1000):
                 generated_text = generated_text.split("<|endoftext|>")[0]
                 break
             
-            input_ids = torch.cat([input_ids, sampled_token.unsqueeze(0)], dim=-1)
+            input_ids = torch.cat([input_ids, sampled_token.transpose(0, 1)], dim=-1)
             attention_mask = torch.cat([attention_mask, torch.ones((1, 1), dtype=torch.long, device=device)], dim=1)
         
         if input_ids.shape[1] >= model.config.max_position_embeddings:
