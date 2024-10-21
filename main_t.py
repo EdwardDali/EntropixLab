@@ -27,36 +27,33 @@ class SamplerState(Enum):
     SAMPLE = 1
     INSERT_COT = 2
     RESAMPLE = 3
-    ADAPTIVE = 4  # New adaptive sampling strategy
+    ADAPTIVE = 4
 
 class SamplerConfig:
     def __init__(self, tokenizer=None):
-        self.entropy_threshold = 1.0
-        self.varentropy_threshold = 1.5
-        self.attention_entropy_threshold = 2.0
-        self.cot_token = tokenizer.encode("[COT]", add_special_tokens=False)[0] if tokenizer else None
-        self.resample_count = 5
-        self.strategy_params: Dict[SamplerState, Dict[str, float]] = {
-            SamplerState.ARGMAX: {"temperature": 0.1, "top_p": 1.0, "top_k": 1, "min_p": 0.0},
-            SamplerState.SAMPLE: {"temperature": 0.7, "top_p": 0.9, "top_k": 50, "min_p": 0.02},
-            SamplerState.INSERT_COT: {"temperature": 0.8, "top_p": 0.95, "top_k": 100, "min_p": 0.01},
-            SamplerState.RESAMPLE: {"temperature": 1.0, "top_p": 0.98, "top_k": 200, "min_p": 0.005},
-            SamplerState.ADAPTIVE: {"temperature": 0.666, "top_p": 0.90, "top_k": 27, "min_p": 0.03}
-        }
-        self.repetition_penalty = 1.2
-        self.max_ngram_size = 5
-        self.max_ngram_repeat = 3
-        self.strategy_change_batch_size = 1
-        self.window_size = 50
-        self.long_window_size = 500
-        self.decay_factor = 0.95
-        self.long_decay_factor = 0.95
-        self.base_temperature = 0.7
-        self.max_temperature = 1.5
-        self.temperature_increase_rate = 0.05
-        
-        # Adaptive sampling parameters
-        self.n_adaptive_samples = 50
+        self.temp = 0.666
+        self.top_p = 0.90
+        self.top_k = 27
+        self.min_p = 0.03
+
+        self.low_ent_thresh = 0.1
+        self.low_vent_thresh = 0.1
+        self.med_ent_thresh = 3.0
+        self.high_ent_thresh = 5.0
+        self.high_vent_thresh = 5.0
+
+        self.helv_attn_ent_offset = 1.3
+        self.helv_attn_ent_coef = 0.2
+
+        self.lehv_interaction_strength_offset = 1.2
+        self.lehv_interaction_strength_coef = 0.3
+
+        self.hehv_attn_ent_coef = 0.2
+        self.hehv_attn_vent_offset = 2.0
+        self.hehv_attn_vent_coef = 0.5
+
+        self.n_adaptive_samples = 5
+
         self.ada_temp_logits = 0.3
         self.ada_temp_attn = 0.2
         self.ada_temp_agree = 0.2
@@ -70,6 +67,19 @@ class SamplerConfig:
         self.ada_score_attn_vent = 0.4
         self.ada_score_agree = 0.5
         self.ada_score_int = 0.6
+
+        self.cot_token = tokenizer.encode("[COT]", add_special_tokens=False)[0] if tokenizer else None
+        self.repetition_penalty = 1.2
+        self.max_ngram_size = 5
+        self.max_ngram_repeat = 3
+        self.strategy_change_batch_size = 1
+        self.window_size = 50
+        self.long_window_size = 500
+        self.decay_factor = 0.95
+        self.long_decay_factor = 0.95
+        self.base_temperature = 0.7
+        self.max_temperature = 1.5
+        self.temperature_increase_rate = 0.05
 
 class EntropixSampler:
     def __init__(self, config: SamplerConfig):
@@ -97,25 +107,33 @@ class EntropixSampler:
         self.long_entropy_window.append(entropy.item())
         self.long_varentropy_window.append(varentropy.item())
         
-        if self.tokens_since_last_change % self.config.strategy_change_batch_size == 0:
-            avg_entropy = self.weighted_average(self.entropy_window, self.config.decay_factor)
-            avg_varentropy = self.weighted_average(self.varentropy_window, self.config.decay_factor)
-            avg_attention_entropy = self.weighted_average(self.attention_entropy_window, self.config.decay_factor)
-            long_avg_entropy = self.weighted_average(self.long_entropy_window, self.config.long_decay_factor)
-            long_avg_varentropy = self.weighted_average(self.long_varentropy_window, self.config.long_decay_factor)
-            
-            combined_entropy = (avg_entropy + long_avg_entropy) / 2
-            combined_varentropy = (avg_varentropy + long_avg_varentropy) / 2
-            
-            self.current_strategy = self.determine_strategy(combined_entropy, combined_varentropy, avg_attention_entropy)
-            self.tokens_since_last_change = 0
+        avg_entropy = self.weighted_average(self.entropy_window, self.config.decay_factor)
+        avg_varentropy = self.weighted_average(self.varentropy_window, self.config.decay_factor)
+        avg_attention_entropy = self.weighted_average(self.attention_entropy_window, self.config.decay_factor)
+        long_avg_entropy = self.weighted_average(self.long_entropy_window, self.config.long_decay_factor)
+        long_avg_varentropy = self.weighted_average(self.long_varentropy_window, self.config.long_decay_factor)
         
-        if self.current_strategy == SamplerState.ADAPTIVE:
+        combined_entropy = (avg_entropy + long_avg_entropy) / 2
+        combined_varentropy = (avg_varentropy + long_avg_varentropy) / 2
+        
+        self.current_strategy = self.determine_strategy(combined_entropy, combined_varentropy, avg_attention_entropy)
+        
+        if self.current_strategy == SamplerState.ARGMAX:
+            sampled_token = torch.argmax(logits[:, -1], dim=-1, keepdim=True)
+        elif self.current_strategy == SamplerState.INSERT_COT:
+            if self.config.cot_token not in self.recent_tokens:
+                sampled_token = torch.tensor([[self.config.cot_token]], device=logits.device)
+            else:
+                temp_adj = self.config.helv_attn_ent_offset + self.config.helv_attn_ent_coef * avg_attention_entropy
+                sampled_token = self._sample(logits, temperature=min(1.5, self.config.temp * temp_adj))
+        elif self.current_strategy == SamplerState.RESAMPLE:
+            temp_adj = self.config.lehv_interaction_strength_offset + self.config.lehv_interaction_strength_coef * self.calculate_interaction_strength(attention)
+            top_k_adj = max(5, int(self.config.top_k * (1 + 0.5 * (1 - self.calculate_agreement(attention)))))
+            sampled_token = self._sample(logits, temperature=min(1.5, self.config.temp * temp_adj), top_k=top_k_adj)
+        elif self.current_strategy == SamplerState.ADAPTIVE:
             sampled_token = self._adaptive_sample(logits, attention)
-        else:
-            params = self.config.strategy_params[self.current_strategy].copy()
-            params["temperature"] = self.adjust_temperature(self.current_strategy)
-            sampled_token = self._sample(logits, **params)
+        else:  # SamplerState.SAMPLE
+            sampled_token = self._sample(logits)
         
         self.strategy_counter[self.current_strategy.name] += 1
         self.tokens_since_last_change += 1
@@ -123,10 +141,7 @@ class EntropixSampler:
         self.recent_tokens.append(sampled_token.item())
         
         if self.check_ngram_repetition(list(self.recent_tokens)):
-            temp_params = self.config.strategy_params[SamplerState.SAMPLE].copy()
-            temp_params["temperature"] = 1.2
-            temp_params["top_k"] = 100
-            sampled_token = self._sample(logits, **temp_params)
+            sampled_token = self._sample(logits, temperature=1.2, top_k=100)
         
         if len(self.current_batch) == self.config.strategy_change_batch_size:
             self.current_batch = []
@@ -140,14 +155,16 @@ class EntropixSampler:
         return sum(w * v for w, v in zip(weights, values)) / sum(weights)
 
     def determine_strategy(self, entropy: float, varentropy: float, attention_entropy: float) -> SamplerState:
-        if entropy < self.config.entropy_threshold and attention_entropy < self.config.attention_entropy_threshold:
-            return SamplerState.ARGMAX if varentropy < self.config.varentropy_threshold else SamplerState.SAMPLE
-        elif entropy >= self.config.entropy_threshold and attention_entropy < self.config.attention_entropy_threshold:
+        if entropy < self.config.low_ent_thresh and varentropy < self.config.low_vent_thresh:
+            return SamplerState.ARGMAX
+        elif entropy > self.config.high_ent_thresh and varentropy < self.config.low_vent_thresh:
             return SamplerState.INSERT_COT
-        elif varentropy > self.config.varentropy_threshold * 1.5:
+        elif entropy < self.config.high_ent_thresh and varentropy > self.config.high_vent_thresh:
             return SamplerState.RESAMPLE
-        else:
+        elif entropy > self.config.med_ent_thresh and varentropy > self.config.high_vent_thresh:
             return SamplerState.ADAPTIVE
+        else:
+            return SamplerState.SAMPLE
 
     def calculate_varentropy_logsoftmax(self, logits: torch.Tensor, axis: int = -1) -> Tuple[torch.Tensor, torch.Tensor]:
         log_probs = F.log_softmax(logits, dim=axis)
@@ -162,7 +179,19 @@ class EntropixSampler:
         entropy = -torch.sum(attention_probs * torch.log2(attention_probs + 1e-10), dim=-1)
         return entropy.mean()
 
-    def _sample(self, logits: torch.Tensor, temperature: float, top_p: float, top_k: int, min_p: float) -> torch.Tensor:
+    def calculate_interaction_strength(self, attention: torch.Tensor) -> torch.Tensor:
+        return torch.mean(torch.abs(attention))
+
+    def calculate_agreement(self, attention: torch.Tensor) -> torch.Tensor:
+        mean_attention = torch.mean(attention, dim=1)
+        return 1 - torch.mean(torch.abs(attention - mean_attention.unsqueeze(1)))
+
+    def _sample(self, logits: torch.Tensor, temperature: float = None, top_p: float = None, top_k: int = None, min_p: float = None) -> torch.Tensor:
+        temperature = temperature or self.config.temp
+        top_p = top_p or self.config.top_p
+        top_k = top_k or self.config.top_k
+        min_p = min_p or self.config.min_p
+
         probs = F.softmax(logits / temperature, dim=-1)
 
         if min_p > 0.0:
@@ -189,26 +218,54 @@ class EntropixSampler:
             return torch.argmax(probs).unsqueeze(0)
 
     def _adaptive_sample(self, logits: torch.Tensor, attention: torch.Tensor) -> torch.Tensor:
-        entropy, varentropy = self.calculate_varentropy_logsoftmax(logits)
-        attention_entropy = self.calculate_attention_entropy(attention)
+        metrics = self.calculate_metrics(logits, attention)
         
+        temperature = self.config.temp * (1 + self.config.ada_temp_logits * metrics["logits_uncertainty"] + 
+                                          self.config.ada_temp_attn * metrics["attn_uncertainty"] - 
+                                          self.config.ada_temp_agree * metrics["agreement"])
+        top_p = min(max(self.config.top_p * (1 + self.config.ada_top_p * metrics["attn_varentropy"]), 0.1), 1.0)
+        top_k = int(min(max(self.config.top_k * (1 + self.config.ada_top_k_int * metrics["interaction_strength"] - 
+                                                 self.config.ada_top_k_agree * metrics["agreement"]), 1), 100))
+        min_p = min(max(self.config.min_p * (1 - self.config.ada_min_p * metrics["logits_uncertainty"]), 0.01), 0.5)
+
         samples = []
         for _ in range(self.config.n_adaptive_samples):
-            sample = self._sample(logits, **self.config.strategy_params[SamplerState.ADAPTIVE])
+            sample = self._sample(logits, temperature=temperature, top_p=top_p, top_k=top_k, min_p=min_p)
             samples.append(sample)
 
-        def score_sample(sample):
-            log_prob = F.log_softmax(logits, dim=-1)[0, sample.item()].item()
-            confidence_score = (
-                (1 - entropy) * self.config.ada_score_logits_ent +
-                (1 - varentropy) * self.config.ada_score_logits_vent +
-                (1 - attention_entropy) * self.config.ada_score_attn_ent
-            )
-            return log_prob + confidence_score
-
-        sample_scores = [score_sample(sample) for sample in samples]
+        sample_scores = [self.score_sample(sample, logits, metrics) for sample in samples]
         best_sample_idx = torch.argmax(torch.tensor(sample_scores))
         return samples[best_sample_idx]
+
+    def calculate_metrics(self, logits: torch.Tensor, attention: torch.Tensor) -> Dict[str, float]:
+        entropy, varentropy = self.calculate_varentropy_logsoftmax(logits)
+        attn_entropy = self.calculate_attention_entropy(attention)
+        attn_varentropy = torch.var(attn_entropy)
+        agreement = self.calculate_agreement(attention)
+        interaction_strength = self.calculate_interaction_strength(attention)
+
+        return {
+            "logits_entropy": entropy.mean().item(),
+            "logits_varentropy": varentropy.mean().item(),
+            "attn_entropy": attn_entropy.item(),
+            "attn_varentropy": attn_varentropy.item(),
+            "agreement": agreement.item(),
+            "interaction_strength": interaction_strength.item(),
+            "logits_uncertainty": entropy.mean().item() + varentropy.mean().item(),
+            "attn_uncertainty": attn_entropy.item() + attn_varentropy.item()
+        }
+
+    def score_sample(self, sample: torch.Tensor, logits: torch.Tensor, metrics: Dict[str, float]) -> float:
+        log_prob = F.log_softmax(logits, dim=-1)[0, sample.item()].item()
+        confidence_score = (
+            (1 - metrics["logits_entropy"]) * self.config.ada_score_logits_ent +
+            (1 - metrics["attn_entropy"]) * self.config.ada_score_attn_ent +
+            (1 - metrics["logits_varentropy"]) * self.config.ada_score_logits_vent +
+            (1 - metrics["attn_varentropy"]) * self.config.ada_score_attn_vent +
+            metrics["agreement"] * self.config.ada_score_agree +
+            metrics["interaction_strength"] * self.config.ada_score_int
+        )
+        return log_prob + confidence_score
 
     def check_ngram_repetition(self, tokens: List[int]) -> bool:
         window = tokens[-self.sliding_window:]
@@ -222,12 +279,6 @@ class EntropixSampler:
                 else:
                     self.ngram_counts[ngram] = 1
         return False
-
-    def adjust_temperature(self, current_strategy: SamplerState) -> float:
-        if current_strategy == SamplerState.SAMPLE:
-            return min(self.config.base_temperature + self.config.temperature_increase_rate * self.tokens_since_last_change,
-                       self.config.max_temperature)
-        return self.config.strategy_params[current_strategy]["temperature"]
 
 def generate_response(model, tokenizer, prompt, max_tokens=1000):
     cfg = SamplerConfig(tokenizer)
