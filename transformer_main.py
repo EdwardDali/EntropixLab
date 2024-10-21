@@ -27,85 +27,116 @@ class SamplerState(Enum):
     SAMPLE = 1
     INSERT_COT = 2
     RESAMPLE = 3
+    ADAPTIVE = 4  # New adaptive sampling strategy
 
 class SamplerConfig:
-    def __init__(self, tokenizer):
+    def __init__(self, tokenizer=None):
         self.entropy_threshold = 1.0
         self.varentropy_threshold = 1.5
-        self.attention_entropy_threshold = 2.0  # New threshold for attention entropy
-        self.cot_token = tokenizer.encode("[COT]", add_special_tokens=False)[0]
+        self.attention_entropy_threshold = 2.0
+        self.cot_token = tokenizer.encode("[COT]", add_special_tokens=False)[0] if tokenizer else None
         self.resample_count = 5
         self.strategy_params: Dict[SamplerState, Dict[str, float]] = {
             SamplerState.ARGMAX: {"temperature": 0.1, "top_p": 1.0, "top_k": 1, "min_p": 0.0},
             SamplerState.SAMPLE: {"temperature": 0.7, "top_p": 0.9, "top_k": 50, "min_p": 0.02},
             SamplerState.INSERT_COT: {"temperature": 0.8, "top_p": 0.95, "top_k": 100, "min_p": 0.01},
-            SamplerState.RESAMPLE: {"temperature": 1.0, "top_p": 0.98, "top_k": 200, "min_p": 0.005}
+            SamplerState.RESAMPLE: {"temperature": 1.0, "top_p": 0.98, "top_k": 200, "min_p": 0.005},
+            SamplerState.ADAPTIVE: {"temperature": 0.666, "top_p": 0.90, "top_k": 27, "min_p": 0.03}
         }
         self.repetition_penalty = 1.2
         self.max_ngram_size = 5
         self.max_ngram_repeat = 3
         self.strategy_change_batch_size = 1
-        self.window_size = 5  # Size of the sliding window for weighted average
-        self.decay_factor = 0.95  # Exponential decay factor for weighting
+        self.window_size = 50
+        self.long_window_size = 500
+        self.decay_factor = 0.95
+        self.long_decay_factor = 0.95
+        self.base_temperature = 0.7
+        self.max_temperature = 1.5
+        self.temperature_increase_rate = 0.05
+        
+        # Adaptive sampling parameters
+        self.n_adaptive_samples = 50
+        self.ada_temp_logits = 0.3
+        self.ada_temp_attn = 0.2
+        self.ada_temp_agree = 0.2
+        self.ada_top_p = 0.1
+        self.ada_top_k_int = 0.3
+        self.ada_top_k_agree = 0.2
+        self.ada_min_p = 0.5
+        self.ada_score_logits_ent = 0.1
+        self.ada_score_attn_ent = 0.2
+        self.ada_score_logits_vent = 0.3
+        self.ada_score_attn_vent = 0.4
+        self.ada_score_agree = 0.5
+        self.ada_score_int = 0.6
 
 class EntropixSampler:
     def __init__(self, config: SamplerConfig):
         self.config = config
         self.strategy_counter = Counter()
-        self.recent_tokens = deque(maxlen=100)
+        self.recent_tokens = deque(maxlen=200)
         self.current_batch = []
         self.current_strategy = SamplerState.SAMPLE
         self.tokens_since_last_change = 0
         self.entropy_window = deque(maxlen=self.config.window_size)
         self.varentropy_window = deque(maxlen=self.config.window_size)
         self.attention_entropy_window = deque(maxlen=self.config.window_size)
+        self.long_entropy_window = deque(maxlen=self.config.long_window_size)
+        self.long_varentropy_window = deque(maxlen=self.config.long_window_size)
+        self.ngram_counts = {}
+        self.sliding_window = 100
 
     def sample(self, logits: torch.Tensor, attention: torch.Tensor) -> Tuple[torch.Tensor, SamplerState]:
-        # Calculate entropy, varentropy, and attention entropy for the current token
         entropy, varentropy = self.calculate_varentropy_logsoftmax(logits)
         attention_entropy = self.calculate_attention_entropy(attention)
         
         self.entropy_window.append(entropy.item())
         self.varentropy_window.append(varentropy.item())
         self.attention_entropy_window.append(attention_entropy.item())
+        self.long_entropy_window.append(entropy.item())
+        self.long_varentropy_window.append(varentropy.item())
         
-        # Check if it's time to recalculate the strategy
         if self.tokens_since_last_change % self.config.strategy_change_batch_size == 0:
-            avg_entropy = self.weighted_average(self.entropy_window)
-            avg_varentropy = self.weighted_average(self.varentropy_window)
-            avg_attention_entropy = self.weighted_average(self.attention_entropy_window)
+            avg_entropy = self.weighted_average(self.entropy_window, self.config.decay_factor)
+            avg_varentropy = self.weighted_average(self.varentropy_window, self.config.decay_factor)
+            avg_attention_entropy = self.weighted_average(self.attention_entropy_window, self.config.decay_factor)
+            long_avg_entropy = self.weighted_average(self.long_entropy_window, self.config.long_decay_factor)
+            long_avg_varentropy = self.weighted_average(self.long_varentropy_window, self.config.long_decay_factor)
             
-            self.current_strategy = self.determine_strategy(avg_entropy, avg_varentropy, avg_attention_entropy)
+            combined_entropy = (avg_entropy + long_avg_entropy) / 2
+            combined_varentropy = (avg_varentropy + long_avg_varentropy) / 2
+            
+            self.current_strategy = self.determine_strategy(combined_entropy, combined_varentropy, avg_attention_entropy)
             self.tokens_since_last_change = 0
         
-        # Use the current strategy to sample
-        params = self.config.strategy_params[self.current_strategy]
-        sampled_token = self._sample(logits, **params)
+        if self.current_strategy == SamplerState.ADAPTIVE:
+            sampled_token = self._adaptive_sample(logits, attention)
+        else:
+            params = self.config.strategy_params[self.current_strategy].copy()
+            params["temperature"] = self.adjust_temperature(self.current_strategy)
+            sampled_token = self._sample(logits, **params)
         
-        # Update counters and lists
         self.strategy_counter[self.current_strategy.name] += 1
         self.tokens_since_last_change += 1
         self.current_batch.append(sampled_token.item())
         self.recent_tokens.append(sampled_token.item())
         
-        # Check for n-gram repetition in the current batch
-        if self.check_ngram_repetition(self.current_batch):
-            # Increase temperature and top_k to encourage diversity
-            temp_config = SamplerConfig(None)
-            temp_config.strategy_params[SamplerState.SAMPLE]["temperature"] = 1.2
-            temp_config.strategy_params[SamplerState.SAMPLE]["top_k"] = 100
-            sampled_token = self._sample(logits, **temp_config.strategy_params[SamplerState.SAMPLE])
+        if self.check_ngram_repetition(list(self.recent_tokens)):
+            temp_params = self.config.strategy_params[SamplerState.SAMPLE].copy()
+            temp_params["temperature"] = 1.2
+            temp_params["top_k"] = 100
+            sampled_token = self._sample(logits, **temp_params)
         
-        # Reset batch if it reaches the configured batch size
         if len(self.current_batch) == self.config.strategy_change_batch_size:
             self.current_batch = []
         
         return sampled_token, self.current_strategy
 
-    def weighted_average(self, values):
+    def weighted_average(self, values, decay_factor):
         if not values:
             return 0
-        weights = [self.config.decay_factor ** i for i in range(len(values) - 1, -1, -1)]
+        weights = [decay_factor ** i for i in range(len(values) - 1, -1, -1)]
         return sum(w * v for w, v in zip(weights, values)) / sum(weights)
 
     def determine_strategy(self, entropy: float, varentropy: float, attention_entropy: float) -> SamplerState:
@@ -113,37 +144,34 @@ class EntropixSampler:
             return SamplerState.ARGMAX if varentropy < self.config.varentropy_threshold else SamplerState.SAMPLE
         elif entropy >= self.config.entropy_threshold and attention_entropy < self.config.attention_entropy_threshold:
             return SamplerState.INSERT_COT
-        else:
+        elif varentropy > self.config.varentropy_threshold * 1.5:
             return SamplerState.RESAMPLE
+        else:
+            return SamplerState.ADAPTIVE
 
     def calculate_varentropy_logsoftmax(self, logits: torch.Tensor, axis: int = -1) -> Tuple[torch.Tensor, torch.Tensor]:
         log_probs = F.log_softmax(logits, dim=axis)
         probs = torch.exp(log_probs)
-        entropy = -torch.sum(probs * log_probs, dim=axis) / LN_2  # Convert to base-2
+        entropy = -torch.sum(probs * log_probs, dim=axis) / LN_2
         varentropy = torch.sum(probs * (log_probs / LN_2 + entropy.unsqueeze(-1))**2, dim=axis)
         return entropy, varentropy
 
     def calculate_attention_entropy(self, attention: torch.Tensor) -> torch.Tensor:
-        # Assuming attention is of shape (batch_size, num_heads, seq_len, seq_len)
-        # We'll calculate entropy for each head and then average
-        attention = attention.mean(dim=1)  # Average over heads
+        attention = attention.mean(dim=1)
         attention_probs = attention / attention.sum(dim=-1, keepdim=True)
         entropy = -torch.sum(attention_probs * torch.log2(attention_probs + 1e-10), dim=-1)
-        return entropy.mean()  # Average over sequence length
+        return entropy.mean()
 
     def _sample(self, logits: torch.Tensor, temperature: float, top_p: float, top_k: int, min_p: float) -> torch.Tensor:
         probs = F.softmax(logits / temperature, dim=-1)
 
-        # Apply min_p sampling
         if min_p > 0.0:
             p_max = torch.max(probs)
             probs[probs < (min_p * p_max)] = 0
             probs = probs / probs.sum()
 
-        # Apply top-k sampling
         top_k_probs, top_k_indices = torch.topk(probs, k=min(top_k, probs.shape[-1]))
         
-        # Apply top-p sampling
         cumulative_probs = torch.cumsum(top_k_probs, dim=-1)
         probs_to_keep = cumulative_probs <= top_p
         if not probs_to_keep.any():
@@ -151,25 +179,55 @@ class EntropixSampler:
         top_k_probs = top_k_probs[probs_to_keep]
         top_k_indices = top_k_indices[probs_to_keep]
 
-        # Ensure we have valid probabilities
         if top_k_probs.sum() <= 0:
             return torch.argmax(probs).unsqueeze(0)
 
-        # Sample from the filtered distribution
         try:
             sample = torch.multinomial(top_k_probs, num_samples=1)
             return top_k_indices[sample]
         except RuntimeError:
-            # If multinomial fails, fall back to argmax
             return torch.argmax(probs).unsqueeze(0)
 
+    def _adaptive_sample(self, logits: torch.Tensor, attention: torch.Tensor) -> torch.Tensor:
+        entropy, varentropy = self.calculate_varentropy_logsoftmax(logits)
+        attention_entropy = self.calculate_attention_entropy(attention)
+        
+        samples = []
+        for _ in range(self.config.n_adaptive_samples):
+            sample = self._sample(logits, **self.config.strategy_params[SamplerState.ADAPTIVE])
+            samples.append(sample)
+
+        def score_sample(sample):
+            log_prob = F.log_softmax(logits, dim=-1)[0, sample.item()].item()
+            confidence_score = (
+                (1 - entropy) * self.config.ada_score_logits_ent +
+                (1 - varentropy) * self.config.ada_score_logits_vent +
+                (1 - attention_entropy) * self.config.ada_score_attn_ent
+            )
+            return log_prob + confidence_score
+
+        sample_scores = [score_sample(sample) for sample in samples]
+        best_sample_idx = torch.argmax(torch.tensor(sample_scores))
+        return samples[best_sample_idx]
+
     def check_ngram_repetition(self, tokens: List[int]) -> bool:
+        window = tokens[-self.sliding_window:]
         for n in range(2, self.config.max_ngram_size + 1):
-            ngrams = [tuple(tokens[i:i+n]) for i in range(len(tokens)-n+1)]
-            for ngram in set(ngrams):
-                if ngrams.count(ngram) > self.config.max_ngram_repeat:
-                    return True
+            ngrams = [tuple(window[i:i+n]) for i in range(len(window)-n+1)]
+            for ngram in ngrams:
+                if ngram in self.ngram_counts:
+                    self.ngram_counts[ngram] += 1
+                    if self.ngram_counts[ngram] > self.config.max_ngram_repeat:
+                        return True
+                else:
+                    self.ngram_counts[ngram] = 1
         return False
+
+    def adjust_temperature(self, current_strategy: SamplerState) -> float:
+        if current_strategy == SamplerState.SAMPLE:
+            return min(self.config.base_temperature + self.config.temperature_increase_rate * self.tokens_since_last_change,
+                       self.config.max_temperature)
+        return self.config.strategy_params[current_strategy]["temperature"]
 
 def generate_response(model, tokenizer, prompt, max_tokens=1000):
     cfg = SamplerConfig(tokenizer)
@@ -188,7 +246,7 @@ def generate_response(model, tokenizer, prompt, max_tokens=1000):
         with torch.no_grad():
             outputs = model(input_ids, attention_mask=attention_mask, output_attentions=True)
             logits = outputs.logits[:, -1, :]
-            attention = outputs.attentions[-1]  # Get the last layer's attention
+            attention = outputs.attentions[-1]
             
             sampled_token, state = sampler.sample(logits, attention)
             
@@ -200,10 +258,9 @@ def generate_response(model, tokenizer, prompt, max_tokens=1000):
             generated_text += next_token_text
             print(next_token_text, end="", flush=True)
             
-            # Check for "<|endoftext|>" token
             if "<|endoftext|>" in generated_text:
                 print("\n<|endoftext|> token encountered. Stopping generation.")
-                generated_text = generated_text.split("<|endoftext|>")[0]  # Keep only the text before the token
+                generated_text = generated_text.split("<|endoftext|>")[0]
                 break
             
             input_ids = torch.cat([input_ids, sampled_token.unsqueeze(0)], dim=-1)
@@ -216,7 +273,6 @@ def generate_response(model, tokenizer, prompt, max_tokens=1000):
     total_time = time.time() - start_time
     print(f"\n\nGeneration completed in {total_time:.2f} seconds.")
     
-    # Print the strategy distribution
     total_tokens = sum(sampler.strategy_counter.values())
     print("\nToken Generation Strategy Distribution:")
     for strategy, count in sampler.strategy_counter.items():
@@ -230,7 +286,7 @@ def main():
     logger.info(f"Loading model and tokenizer: {model_name}")
     
     try:
-        model = AutoModelForCausalLM.from_pretrained(model_name).to(device)
+        model = AutoModelForCausalLM.from_pretrained(model_name, attn_implementation="eager").to(device)
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         tokenizer.pad_token = tokenizer.eos_token
     except Exception as e:
@@ -254,7 +310,6 @@ def main():
         print(f"Generated response: {response}")
         print("\n" + "-"*50 + "\n")
         
-        # Save the response to a file
         with open("generated_response.txt", "w", encoding="utf-8") as file:
             file.write(f"Prompt: {prompt}\n\nGenerated response: {response}")
         print("Response saved to generated_response.txt")
