@@ -1,5 +1,6 @@
 # EntropixLab
-**main branch**: fast but limited: entropix like sampler strategies + llama cpp python + gguf
+**main branch**: fast but limited: entropix like sampler strategies + llama cpp python + gguf.
+
 **transformer branch**: slow but entropix like wannabe
 
 
