@@ -1,5 +1,9 @@
 # EntropixLab
-entropix + llama cpp python + gguf
+main brach: fast but limited: entropix like sampler strategies + llama cpp python + gguf
+transformer brach: slow but entropix like wannabe
+
+
+______
 
 This will make your gguf smarter but the answers are not consistent yet. With this tech stack we cannot calculate the attention entropy.
 Nevertheles the run is very fast, so you can play with the parameters values to adjust them to your model or type of questions.
