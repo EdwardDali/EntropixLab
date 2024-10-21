@@ -31,6 +31,7 @@ class SamplerState(Enum):
 
 class SamplerConfig:
     def __init__(self, tokenizer=None):
+        # Updated values to match sampler.py
         self.temp = 0.666
         self.top_p = 0.90
         self.top_k = 27
@@ -68,6 +69,7 @@ class SamplerConfig:
         self.ada_score_agree = 0.5
         self.ada_score_int = 0.6
 
+        # Additional parameters from the original main_t.py
         self.cot_token = tokenizer.encode("[COT]", add_special_tokens=False)[0] if tokenizer else None
         self.repetition_penalty = 1.2
         self.max_ngram_size = 5
@@ -77,9 +79,6 @@ class SamplerConfig:
         self.long_window_size = 500
         self.decay_factor = 0.95
         self.long_decay_factor = 0.95
-        self.base_temperature = 0.7
-        self.max_temperature = 1.5
-        self.temperature_increase_rate = 0.05
 
 class EntropixSampler:
     def __init__(self, config: SamplerConfig):
