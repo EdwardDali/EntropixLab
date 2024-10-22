@@ -1,2 +1,2 @@
 # EntropixLab
-transformer based
+torch + transformers based
