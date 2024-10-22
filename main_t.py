@@ -78,6 +78,24 @@ class SamplerConfig:
         self.decay_factor = 0.95
         self.long_decay_factor = 0.95
 
+        self.generator = torch.Generator(device=device).manual_seed(1337)
+
+        # Align with the approach from torch_sampler.py where 2564 is used
+        self.cot_token = 2564  # Default COT token ID
+        self.question_threshold = 3.0  # From torch_sampler's entropy threshold
+        self.varentropy_threshold = 0.1  # From torch_sampler's varentropy threshold
+        
+        # Keep existing config parameters but rename for clarity
+        self.helv_temp_base = 1.3  # Base temperature adjustment for high entropy
+        self.helv_attn_coef = 0.2  # Attention entropy coefficient
+        
+        if tokenizer:
+            # Try to get token ID from tokenizer if available, otherwise use default
+            try:
+                self.cot_token = tokenizer.encode("[COT]", add_special_tokens=False)[0]
+            except:
+                logger.warning("Could not encode [COT] token, using default ID 2564")
+
 class EntropixSampler:
     def __init__(self, config: SamplerConfig):
         self.config = config
@@ -94,79 +112,6 @@ class EntropixSampler:
         self.ngram_counts = {}
         self.sliding_window = 100
 
-    def sample(self, logits: torch.Tensor, attention: torch.Tensor) -> Tuple[torch.Tensor, SamplerState]:
-        metrics = self.calculate_metrics(logits, attention)
-        
-        self.entropy_window.append(metrics["logits_entropy"])
-        self.varentropy_window.append(metrics["logits_varentropy"])
-        self.attention_entropy_window.append(metrics["attn_entropy"])
-        self.long_entropy_window.append(metrics["logits_entropy"])
-        self.long_varentropy_window.append(metrics["logits_varentropy"])
-        
-        avg_entropy = self.weighted_average(self.entropy_window, self.config.decay_factor)
-        avg_varentropy = self.weighted_average(self.varentropy_window, self.config.decay_factor)
-        avg_attention_entropy = self.weighted_average(self.attention_entropy_window, self.config.decay_factor)
-        long_avg_entropy = self.weighted_average(self.long_entropy_window, self.config.long_decay_factor)
-        long_avg_varentropy = self.weighted_average(self.long_varentropy_window, self.config.long_decay_factor)
-        
-        combined_entropy = (avg_entropy + long_avg_entropy) / 2
-        combined_varentropy = (avg_varentropy + long_avg_varentropy) / 2
-        
-        self.current_strategy = self.determine_strategy(combined_entropy, combined_varentropy, avg_attention_entropy)
-        
-        if self.current_strategy == SamplerState.ARGMAX:
-            # Low Entropy, Low Varentropy: Confident and consistent predictions
-            sampled_token = torch.argmax(logits[:, -1], dim=-1, keepdim=True)
-        elif self.current_strategy == SamplerState.INSERT_COT:
-            # High Entropy, Low Varentropy: Uncertain but consistent, possibly needs clarification
-            if self.config.clarifying_question_token not in self.recent_tokens:
-                sampled_token = torch.tensor([[self.config.clarifying_question_token]], device=logits.device)
-            else:
-                temp_adj = self.config.helv_attn_ent_offset + self.config.helv_attn_ent_coef * avg_attention_entropy
-                sampled_token = self._sample(logits, temperature=min(1.5, self.config.temp * temp_adj))
-        elif self.current_strategy == SamplerState.RESAMPLE:
-            # Low Entropy, High Varentropy: Confident but inconsistent, explore alternatives
-            temp_adj = self.config.lehv_interaction_strength_offset + self.config.lehv_interaction_strength_coef * metrics["interaction_strength"]
-            top_k_adj = max(5, int(self.config.top_k * (1 + 0.5 * (1 - metrics["agreement"]))))
-            sampled_token = self._sample(logits, temperature=min(1.5, self.config.temp * temp_adj), top_k=top_k_adj)
-        elif self.current_strategy == SamplerState.ADAPTIVE:
-            # High Entropy, High Varentropy: Highly uncertain and inconsistent, need careful sampling
-            sampled_token = self._adaptive_sample(logits, metrics)
-        else:  # SamplerState.SAMPLE
-            # Medium Entropy, Medium Varentropy: Standard sampling
-            sampled_token = self._sample(logits)
-        
-        self.strategy_counter[self.current_strategy.name] += 1
-        self.tokens_since_last_change += 1
-        self.current_batch.append(sampled_token.item())
-        self.recent_tokens.append(sampled_token.item())
-        
-        if self.check_ngram_repetition(list(self.recent_tokens)):
-            sampled_token = self._sample(logits, temperature=1.2, top_k=100)
-        
-        if len(self.current_batch) == self.config.strategy_change_batch_size:
-            self.current_batch = []
-        
-        return sampled_token, self.current_strategy
-
-    def weighted_average(self, values, decay_factor):
-        if not values:
-            return 0
-        weights = [decay_factor ** i for i in range(len(values) - 1, -1, -1)]
-        return sum(w * v for w, v in zip(weights, values)) / sum(weights)
-
-    def determine_strategy(self, entropy: float, varentropy: float, attention_entropy: float) -> SamplerState:
-        if entropy < self.config.low_ent_thresh and varentropy < self.config.low_vent_thresh:
-            return SamplerState.ARGMAX
-        elif entropy > self.config.high_ent_thresh and varentropy < self.config.low_vent_thresh:
-            return SamplerState.INSERT_COT
-        elif entropy < self.config.high_ent_thresh and varentropy > self.config.high_vent_thresh:
-            return SamplerState.RESAMPLE
-        elif entropy > self.config.med_ent_thresh and varentropy > self.config.high_vent_thresh:
-            return SamplerState.ADAPTIVE
-        else:
-            return SamplerState.SAMPLE
-
     def calculate_varentropy_logsoftmax(self, logits: torch.Tensor, axis: int = -1) -> Tuple[torch.Tensor, torch.Tensor]:
         log_probs = F.log_softmax(logits, dim=axis)
         probs = torch.exp(log_probs)
@@ -177,19 +122,20 @@ class EntropixSampler:
     def calculate_attention_entropy(self, attention: torch.Tensor) -> torch.Tensor:
         attention_probs = F.softmax(attention, dim=-1)
         entropy = -torch.sum(attention_probs * torch.log2(torch.clamp(attention_probs, min=1e-10)), dim=-1)
-        return entropy.mean(dim=1)  # Average over attention heads
+        return entropy.mean(dim=1)
 
     def calculate_attention_varentropy(self, attention: torch.Tensor) -> torch.Tensor:
         attention_entropy = self.calculate_attention_entropy(attention)
-        return torch.var(attention_entropy)  # Variance across all dimensions
-
-    def calculate_interaction_strength(self, attention: torch.Tensor) -> torch.Tensor:
-        return torch.mean(torch.abs(attention))
+        varentropy = torch.var(attention_entropy)
+        return torch.where(torch.isnan(varentropy), torch.zeros_like(varentropy), varentropy)
 
     def calculate_agreement(self, attention: torch.Tensor) -> torch.Tensor:
         attention_probs = F.softmax(attention, dim=-1)
         mean_attention = torch.mean(attention_probs, dim=1, keepdim=True)
         return 1 - torch.mean(torch.abs(attention_probs - mean_attention))
+
+    def calculate_interaction_strength(self, attention: torch.Tensor) -> torch.Tensor:
+        return torch.mean(torch.abs(attention))
 
     def calculate_metrics(self, logits: torch.Tensor, attention: torch.Tensor) -> Dict[str, float]:
         entropy, varentropy = self.calculate_varentropy_logsoftmax(logits)
@@ -215,16 +161,13 @@ class EntropixSampler:
         top_k = top_k or self.config.top_k
         min_p = min_p or self.config.min_p
 
-        # Ensure logits is 2D: (batch_size, vocab_size)
         if logits.dim() == 3:
             logits = logits[:, -1, :]
         elif logits.dim() == 1:
             logits = logits.unsqueeze(0)
         
-        # Apply temperature
         logits = logits / temperature
 
-        # Apply min_p
         if min_p > 0.0:
             sorted_logits, _ = torch.sort(logits, descending=True, dim=-1)
             cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
@@ -234,20 +177,17 @@ class EntropixSampler:
             indices_to_remove = sorted_indices_to_remove.scatter(dim=1, index=torch.argsort(logits, descending=True), src=sorted_indices_to_remove)
             logits = logits.masked_fill(indices_to_remove, float('-inf'))
 
-        # Apply top-k
-        top_k = min(top_k, logits.size(-1))  # Safety check
+        top_k = min(top_k, logits.size(-1))
         top_k_logits, top_k_indices = torch.topk(logits, k=top_k, dim=-1)
         
-        # Apply top-p
         cumulative_probs = torch.cumsum(F.softmax(top_k_logits, dim=-1), dim=-1)
         sorted_indices_to_remove = cumulative_probs > top_p
         sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
         sorted_indices_to_remove[..., 0] = 0
         top_k_logits = top_k_logits.masked_fill(sorted_indices_to_remove, float('-inf'))
 
-        # Sample
         probs = F.softmax(top_k_logits, dim=-1)
-        sample = torch.multinomial(probs, num_samples=1)
+        sample = torch.multinomial(probs, num_samples=1, generator=self.config.generator)
         return top_k_indices.gather(-1, sample)
 
     def _adaptive_sample(self, logits: torch.Tensor, metrics: Dict[str, float]) -> torch.Tensor:
@@ -269,7 +209,11 @@ class EntropixSampler:
         return samples[best_sample_idx]
 
     def score_sample(self, sample: torch.Tensor, logits: torch.Tensor, metrics: Dict[str, float]) -> float:
-        log_prob = F.log_softmax(logits, dim=-1)[0, sample.item()].item()
+        sample_flat = sample.flatten().to(torch.long)
+        one_hot = F.one_hot(sample_flat, logits.shape[-1])
+        log_probs = F.log_softmax(logits, dim=-1).view(-1, logits.shape[-1])
+        log_prob = torch.sum(log_probs * one_hot).item()
+        
         confidence_score = (
             (1 - metrics["logits_entropy"]) * self.config.ada_score_logits_ent +
             (1 - metrics["attn_entropy"]) * self.config.ada_score_attn_ent +
@@ -279,6 +223,26 @@ class EntropixSampler:
             metrics["interaction_strength"] * self.config.ada_score_int
         )
         return log_prob + confidence_score
+
+    def weighted_average(self, values, decay_factor):
+        if not values:
+            return 0
+        weights = [decay_factor ** i for i in range(len(values) - 1, -1, -1)]
+        return sum(w * v for w, v in zip(weights, values)) / sum(weights)
+
+    def determine_strategy(self, entropy: float, varentropy: float, attention_entropy: float) -> SamplerState:
+        # Align with torch_sampler.py conditions
+        if entropy < self.config.low_ent_thresh and varentropy < self.config.low_vent_thresh:
+            return SamplerState.ARGMAX
+        elif entropy > self.config.question_threshold and varentropy < self.config.varentropy_threshold:
+            # Align with torch_sampler.py's "High Entropy, Low Varentropy" condition
+            return SamplerState.INSERT_COT
+        elif entropy < self.config.high_ent_thresh and varentropy > self.config.high_vent_thresh:
+            return SamplerState.RESAMPLE
+        elif entropy > self.config.med_ent_thresh and varentropy > self.config.high_vent_thresh:
+            return SamplerState.ADAPTIVE
+        else:
+            return SamplerState.SAMPLE
 
     def check_ngram_repetition(self, tokens: List[int]) -> bool:
         window = tokens[-self.sliding_window:]
@@ -292,6 +256,102 @@ class EntropixSampler:
                 else:
                     self.ngram_counts[ngram] = 1
         return False
+
+    def sample(self, logits: torch.Tensor, attention: torch.Tensor) -> Tuple[torch.Tensor, SamplerState]:
+        """
+        Sample next token using entropy-guided state machine with aligned behaviors.
+        
+        Args:
+            logits: Token logits of shape (batch_size, vocab_size) or (batch_size, sequence_length, vocab_size)
+            attention: Attention scores from the last layer
+            
+        Returns:
+            Tuple of (sampled token tensor, current sampling strategy)
+        """
+        metrics = self.calculate_metrics(logits, attention)
+        
+        # Update rolling windows for entropy metrics
+        self.entropy_window.append(metrics["logits_entropy"])
+        self.varentropy_window.append(metrics["logits_varentropy"])
+        self.attention_entropy_window.append(metrics["attn_entropy"])
+        self.long_entropy_window.append(metrics["logits_entropy"])
+        self.long_varentropy_window.append(metrics["logits_varentropy"])
+        
+        # Calculate weighted averages for short and long-term metrics
+        avg_entropy = self.weighted_average(self.entropy_window, self.config.decay_factor)
+        avg_varentropy = self.weighted_average(self.varentropy_window, self.config.decay_factor)
+        avg_attention_entropy = self.weighted_average(self.attention_entropy_window, self.config.decay_factor)
+        long_avg_entropy = self.weighted_average(self.long_entropy_window, self.config.long_decay_factor)
+        long_avg_varentropy = self.weighted_average(self.long_varentropy_window, self.config.long_decay_factor)
+        
+        # Combine short and long-term metrics
+        combined_entropy = (avg_entropy + long_avg_entropy) / 2
+        combined_varentropy = (avg_varentropy + long_avg_varentropy) / 2
+        
+        # Determine sampling strategy based on metrics
+        self.current_strategy = self.determine_strategy(combined_entropy, combined_varentropy, avg_attention_entropy)
+        
+        # Sample based on current strategy
+        if self.current_strategy == SamplerState.ARGMAX:
+            # Low entropy, low varentropy: confident prediction
+            sampled_token = torch.argmax(logits[:, -1], dim=-1, keepdim=True)
+        
+        elif self.current_strategy == SamplerState.INSERT_COT:
+            # High entropy, low varentropy: needs clarification
+            # Align with torch_sampler's COT insertion logic
+            if self.config.cot_token not in self.recent_tokens:
+                sampled_token = torch.tensor([[self.config.cot_token]], device=logits.device)
+            else:
+                # If we just used COT, sample with adjusted temperature
+                temp_adj = self.config.helv_attn_ent_offset + self.config.helv_attn_ent_coef * avg_attention_entropy
+                sampled_token = self._sample(
+                    logits, 
+                    temperature=min(1.5, self.config.temp * temp_adj)
+                )
+        
+        elif self.current_strategy == SamplerState.RESAMPLE:
+            # Low entropy, high varentropy: exploring alternatives
+            temp_adj = (self.config.lehv_interaction_strength_offset + 
+                    self.config.lehv_interaction_strength_coef * metrics["interaction_strength"])
+            top_k_adj = max(5, int(self.config.top_k * (1 + 0.5 * (1 - metrics["agreement"]))))
+            sampled_token = self._sample(
+                logits,
+                temperature=min(1.5, self.config.temp * temp_adj),
+                top_k=top_k_adj
+            )
+        
+        elif self.current_strategy == SamplerState.ADAPTIVE:
+            # High entropy, high varentropy: need careful sampling
+            sampled_token = self._adaptive_sample(logits, metrics)
+        
+        else:  # SamplerState.SAMPLE
+            # Default sampling behavior
+            sampled_token = self._sample(logits)
+        
+        # Update tracking counters and history
+        self.strategy_counter[self.current_strategy.name] += 1
+        self.tokens_since_last_change += 1
+        self.current_batch.append(sampled_token.item())
+        self.recent_tokens.append(sampled_token.item())
+        
+        # Check for and handle repetition
+        if self.check_ngram_repetition(list(self.recent_tokens)):
+            # If repetitive, resample with higher temperature and larger top-k
+            sampled_token = self._sample(
+                logits,
+                temperature=1.2,
+                top_k=100
+            )
+        
+        # Reset batch if needed
+        if len(self.current_batch) == self.config.strategy_change_batch_size:
+            self.current_batch = []
+        
+        # Apply repetition penalty if configured
+        if self.config.repetition_penalty != 1.0 and len(self.recent_tokens) > 0:
+            logits[:, self.recent_tokens] = logits[:, self.recent_tokens] / self.config.repetition_penalty
+        
+        return sampled_token, self.current_strategy
 
 def generate_response(model, tokenizer, prompt, max_tokens=1000):
     cfg = SamplerConfig(tokenizer)
@@ -309,7 +369,7 @@ def generate_response(model, tokenizer, prompt, max_tokens=1000):
     for i in range(max_tokens):
         with torch.no_grad():
             outputs = model(input_ids, attention_mask=attention_mask, output_attentions=True)
-            logits = outputs.logits[:, -1, :]  # No need to unsqueeze
+            logits = outputs.logits[:, -1, :]
             attention = outputs.attentions[-1]
             
             sampled_token, state = sampler.sample(logits, attention)
