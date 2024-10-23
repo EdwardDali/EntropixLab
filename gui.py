@@ -109,6 +109,17 @@ PARAMETER_TOOLTIPS = {
         "long_window_size": "Size of the long-term rolling window.",
         "decay_factor": "Decay rate for rolling statistics.",
         "long_decay_factor": "Decay rate for long-term statistics."
+    },
+    "strategy_thresholds": {
+        "argmax_entropy_thresh": "Maximum entropy threshold for using argmax sampling (highly confident)",
+        "sample_min_entropy_thresh": "Minimum entropy threshold for using basic sampling",
+        "sample_max_entropy_thresh": "Maximum entropy threshold for using basic sampling",
+        "cot_min_entropy_thresh": "Minimum entropy threshold for inserting chain-of-thought tokens",
+        "cot_max_entropy_thresh": "Maximum entropy threshold for inserting chain-of-thought tokens",
+        "resample_min_entropy_thresh": "Minimum entropy threshold for resampling strategy",
+        "resample_max_entropy_thresh": "Maximum entropy threshold for resampling strategy",
+        "adaptive_entropy_thresh": "Minimum entropy threshold for using adaptive sampling",
+        "adaptive_varentropy_thresh": "Minimum variance entropy threshold for using adaptive sampling"
     }
 }
 
@@ -716,6 +727,17 @@ class EntropixTGUI:
         # Add to initialize_parameter_vars
         self.strategy_change_batch_size_var = tk.IntVar(value=1)
 
+        # Strategy Selection Thresholds
+        self.argmax_entropy_thresh_var = tk.DoubleVar(value=0.1)
+        self.sample_min_entropy_thresh_var = tk.DoubleVar(value=0.1)
+        self.sample_max_entropy_thresh_var = tk.DoubleVar(value=1.8)
+        self.cot_min_entropy_thresh_var = tk.DoubleVar(value=1.8)
+        self.cot_max_entropy_thresh_var = tk.DoubleVar(value=2.5)
+        self.resample_min_entropy_thresh_var = tk.DoubleVar(value=0.5)
+        self.resample_max_entropy_thresh_var = tk.DoubleVar(value=2.0)
+        self.adaptive_entropy_thresh_var = tk.DoubleVar(value=2.5)
+        self.adaptive_varentropy_thresh_var = tk.DoubleVar(value=3.0)
+
     def create_parameter_controls(self, parent):
         """Create organized parameter controls with additional tab"""
         # Create notebook for tabbed organization
@@ -1129,7 +1151,16 @@ class EntropixTGUI:
             self.sampler_config.decay_factor = self.decay_factor_var.get()
             self.sampler_config.long_decay_factor = self.long_decay_factor_var.get()
 
-            
+            # Strategy Selection Thresholds
+            self.sampler_config.argmax_entropy_thresh = self.argmax_entropy_thresh_var.get()
+            self.sampler_config.sample_min_entropy_thresh = self.sample_min_entropy_thresh_var.get()
+            self.sampler_config.sample_max_entropy_thresh = self.sample_max_entropy_thresh_var.get()
+            self.sampler_config.cot_min_entropy_thresh = self.cot_min_entropy_thresh_var.get()
+            self.sampler_config.cot_max_entropy_thresh = self.cot_max_entropy_thresh_var.get()
+            self.sampler_config.resample_min_entropy_thresh = self.resample_min_entropy_thresh_var.get()
+            self.sampler_config.resample_max_entropy_thresh = self.resample_max_entropy_thresh_var.get()
+            self.sampler_config.adaptive_entropy_thresh = self.adaptive_entropy_thresh_var.get()
+            self.sampler_config.adaptive_varentropy_thresh = self.adaptive_varentropy_thresh_var.get()
             
             # Save configuration
             self.save_config()
@@ -1287,31 +1318,76 @@ class EntropixTGUI:
         return frame
 
     def create_entropy_controls(self, parent):
-        """Create entropy threshold controls"""
-        thresholds_group = ttk.LabelFrame(parent, text="Entropy Thresholds", padding=5)
-        thresholds_group.pack(fill="x", padx=5, pady=5)
+        """Create entropy threshold controls with strategy-specific sections"""
+        # Basic entropy thresholds
+        basic_group = ttk.LabelFrame(parent, text="Basic Entropy Thresholds", padding=5)
+        basic_group.pack(fill="x", padx=5, pady=5)
         
         self.create_slider_with_tooltip(
-            thresholds_group, "Low Entropy", self.low_ent_thresh_var, 0.0, 1.0,
-            PARAMETER_TOOLTIPS["entropy_thresholds"]["low_ent_thresh"]
-        )
-        self.create_slider_with_tooltip(
-            thresholds_group, "Medium Entropy", self.med_ent_thresh_var, 0.0, 3.0,
-            PARAMETER_TOOLTIPS["entropy_thresholds"]["med_ent_thresh"]
-        )
-        self.create_slider_with_tooltip(
-            thresholds_group, "High Entropy", self.high_ent_thresh_var, 0.0, 5.0,
-            PARAMETER_TOOLTIPS["entropy_thresholds"]["high_ent_thresh"]
-        )
-        self.create_slider_with_tooltip(
-            thresholds_group, "High Varentropy", self.high_vent_thresh_var, 0.0, 5.0,
-            PARAMETER_TOOLTIPS["entropy_thresholds"]["high_vent_thresh"]
-        )
-        self.create_slider_with_tooltip(
-            thresholds_group, "Varentropy Threshold", self.varentropy_threshold_var, 0.0, 1.0,
+            basic_group, "Varentropy Threshold", self.varentropy_threshold_var, 0.0, 1.0,
             PARAMETER_TOOLTIPS["entropy_thresholds"]["varentropy_threshold"]
         )
 
+        # Argmax Strategy
+        argmax_group = ttk.LabelFrame(parent, text="Argmax Strategy", padding=5)
+        argmax_group.pack(fill="x", padx=5, pady=5)
+        
+        self.create_slider_with_tooltip(
+            argmax_group, "Max Entropy", self.argmax_entropy_thresh_var, 0.0, 1.0,
+            PARAMETER_TOOLTIPS["strategy_thresholds"]["argmax_entropy_thresh"]
+        )
+
+        # Basic Sampling Strategy
+        sample_group = ttk.LabelFrame(parent, text="Basic Sampling Strategy", padding=5)
+        sample_group.pack(fill="x", padx=5, pady=5)
+        
+        self.create_slider_with_tooltip(
+            sample_group, "Min Entropy", self.sample_min_entropy_thresh_var, 0.0, 2.0,
+            PARAMETER_TOOLTIPS["strategy_thresholds"]["sample_min_entropy_thresh"]
+        )
+        self.create_slider_with_tooltip(
+            sample_group, "Max Entropy", self.sample_max_entropy_thresh_var, 0.0, 3.0,
+            PARAMETER_TOOLTIPS["strategy_thresholds"]["sample_max_entropy_thresh"]
+        )
+
+        # Chain of Thought Strategy
+        cot_group = ttk.LabelFrame(parent, text="Chain of Thought Strategy", padding=5)
+        cot_group.pack(fill="x", padx=5, pady=5)
+        
+        self.create_slider_with_tooltip(
+            cot_group, "Min Entropy", self.cot_min_entropy_thresh_var, 0.0, 3.0,
+            PARAMETER_TOOLTIPS["strategy_thresholds"]["cot_min_entropy_thresh"]
+        )
+        self.create_slider_with_tooltip(
+            cot_group, "Max Entropy", self.cot_max_entropy_thresh_var, 0.0, 5.0,
+            PARAMETER_TOOLTIPS["strategy_thresholds"]["cot_max_entropy_thresh"]
+        )
+
+        # Resample Strategy
+        resample_group = ttk.LabelFrame(parent, text="Resample Strategy", padding=5)
+        resample_group.pack(fill="x", padx=5, pady=5)
+        
+        self.create_slider_with_tooltip(
+            resample_group, "Min Entropy", self.resample_min_entropy_thresh_var, 0.0, 3.0,
+            PARAMETER_TOOLTIPS["strategy_thresholds"]["resample_min_entropy_thresh"]
+        )
+        self.create_slider_with_tooltip(
+            resample_group, "Max Entropy", self.resample_max_entropy_thresh_var, 0.0, 5.0,
+            PARAMETER_TOOLTIPS["strategy_thresholds"]["resample_max_entropy_thresh"]
+        )
+
+        # Adaptive Strategy
+        adaptive_group = ttk.LabelFrame(parent, text="Adaptive Strategy", padding=5)
+        adaptive_group.pack(fill="x", padx=5, pady=5)
+        
+        self.create_slider_with_tooltip(
+            adaptive_group, "Min Entropy", self.adaptive_entropy_thresh_var, 0.0, 5.0,
+            PARAMETER_TOOLTIPS["strategy_thresholds"]["adaptive_entropy_thresh"]
+        )
+        self.create_slider_with_tooltip(
+            adaptive_group, "Min Varentropy", self.adaptive_varentropy_thresh_var, 0.0, 5.0,
+            PARAMETER_TOOLTIPS["strategy_thresholds"]["adaptive_varentropy_thresh"]
+        )
     def create_adaptive_controls(self, parent):
         """Create adaptive sampling controls"""
         adaptive_group = ttk.LabelFrame(parent, text="Adaptive Parameters", padding=5)
@@ -1711,6 +1787,17 @@ class EntropixTGUI:
                     "long_window_size": self.long_window_size_var.get(),
                     "decay_factor": self.decay_factor_var.get(),
                     "long_decay_factor": self.long_decay_factor_var.get()
+                },
+                "strategy_thresholds": {
+                    "argmax_entropy_thresh": self.argmax_entropy_thresh_var.get(),
+                    "sample_min_entropy_thresh": self.sample_min_entropy_thresh_var.get(),
+                    "sample_max_entropy_thresh": self.sample_max_entropy_thresh_var.get(),
+                    "cot_min_entropy_thresh": self.cot_min_entropy_thresh_var.get(),
+                    "cot_max_entropy_thresh": self.cot_max_entropy_thresh_var.get(),
+                    "resample_min_entropy_thresh": self.resample_min_entropy_thresh_var.get(),
+                    "resample_max_entropy_thresh": self.resample_max_entropy_thresh_var.get(),
+                    "adaptive_entropy_thresh": self.adaptive_entropy_thresh_var.get(),
+                    "adaptive_varentropy_thresh": self.adaptive_varentropy_thresh_var.get()
                 }
             },
             "generation_settings": {
