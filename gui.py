@@ -955,65 +955,94 @@ class EntropixTGUI:
         """Save configuration for the current model"""
         if not self.current_model_hash:
             return
-            
-        config = {
-            "model_name": self.current_model_name,
-            "model_hash": self.current_model_hash,
-            "last_updated": datetime.now().isoformat(),
-            "parameters": {
-                "basic_sampling": {
-                    "temp": self.temp_var.get(),
-                    "top_p": self.top_p_var.get(),
-                    "top_k": self.top_k_var.get(),
-                    "min_p": self.min_p_var.get(),
-                    "repetition_penalty": self.repetition_penalty_var.get()
-                },
-                "entropy_thresholds": {
-                    "low_ent_thresh": self.low_ent_thresh_var.get(),
-                    "med_ent_thresh": self.med_ent_thresh_var.get(),
-                    "high_ent_thresh": self.high_ent_thresh_var.get(),
-                    "high_vent_thresh": self.high_vent_thresh_var.get(),
-                    "varentropy_threshold": self.varentropy_threshold_var.get()
-                },
-                "adaptive_sampling": {
-                    "ada_temp_logits": self.ada_temp_logits_var.get(),
-                    "ada_temp_attn": self.ada_temp_attn_var.get(),
-                    "ada_temp_agree": self.ada_temp_agree_var.get(),
-                    "n_adaptive_samples": self.n_adaptive_samples_var.get()
-                },
-                "rope_parameters": {
-                    "rope_theta": self.rope_theta_var.get(),
-                    "rope_scaling": self.rope_scaling_var.get(),
-                    "rope_scale_base": self.rope_scale_base_var.get(),
-                    "rope_scale_factor": self.rope_scale_factor_var.get()
-                },
-                "attention_coefficients": {
-                    "helv_attn_ent_offset": self.helv_attn_ent_offset_var.get(),
-                    "helv_attn_ent_coef": self.helv_attn_ent_coef_var.get(),
-                    "lehv_interaction_strength_offset": self.lehv_interaction_strength_offset_var.get(),
-                    "lehv_interaction_strength_coef": self.lehv_interaction_strength_coef_var.get(),
-                    "hehv_attn_ent_coef": self.hehv_attn_ent_coef_var.get(),
-                    "hehv_attn_vent_offset": self.hehv_attn_vent_offset_var.get(),
-                    "hehv_attn_vent_coef": self.hehv_attn_vent_coef_var.get()
-                },
-                "memory_context": {
-                    "max_ngram_size": self.max_ngram_size_var.get(),
-                    "max_ngram_repeat": self.max_ngram_repeat_var.get(),
-                    "window_size": self.window_size_var.get(),
-                    "long_window_size": self.long_window_size_var.get(),
-                    "decay_factor": self.decay_factor_var.get(),
-                    "long_decay_factor": self.long_decay_factor_var.get()
-                }
-            }
-        }
         
         try:
+            # Ensure config directory exists
+            self.config_dir.mkdir(exist_ok=True)
+            
+            config = {
+                "model_name": self.current_model_name,
+                "model_hash": self.current_model_hash,
+                "last_updated": datetime.now().isoformat(),
+                "parameters": {
+                    "basic_sampling": {
+                        "temp": self.temp_var.get(),
+                        "top_p": self.top_p_var.get(),
+                        "top_k": self.top_k_var.get(),
+                        "min_p": self.min_p_var.get(),
+                        "repetition_penalty": self.repetition_penalty_var.get()
+                    },
+                    "entropy_thresholds": {
+                        "low_ent_thresh": self.low_ent_thresh_var.get(),
+                        "med_ent_thresh": self.med_ent_thresh_var.get(),
+                        "high_ent_thresh": self.high_ent_thresh_var.get(),
+                        "high_vent_thresh": self.high_vent_thresh_var.get(),
+                        "varentropy_threshold": self.varentropy_threshold_var.get()
+                    },
+                    "adaptive_sampling": {
+                        "ada_temp_logits": self.ada_temp_logits_var.get(),
+                        "ada_temp_attn": self.ada_temp_attn_var.get(),
+                        "ada_temp_agree": self.ada_temp_agree_var.get(),
+                        "n_adaptive_samples": self.n_adaptive_samples_var.get()
+                    },
+                    "rope_parameters": {
+                        "rope_theta": self.rope_theta_var.get(),
+                        "rope_scaling": self.rope_scaling_var.get(),
+                        "rope_scale_base": self.rope_scale_base_var.get(),
+                        "rope_scale_factor": self.rope_scale_factor_var.get()
+                    },
+                    "attention_coefficients": {
+                        "helv_attn_ent_offset": self.helv_attn_ent_offset_var.get(),
+                        "helv_attn_ent_coef": self.helv_attn_ent_coef_var.get(),
+                        "lehv_interaction_strength_offset": self.lehv_interaction_strength_offset_var.get(),
+                        "lehv_interaction_strength_coef": self.lehv_interaction_strength_coef_var.get(),
+                        "hehv_attn_ent_coef": self.hehv_attn_ent_coef_var.get(),
+                        "hehv_attn_vent_offset": self.hehv_attn_vent_offset_var.get(),
+                        "hehv_attn_vent_coef": self.hehv_attn_vent_coef_var.get()
+                    },
+                    "memory_context": {
+                        "max_ngram_size": self.max_ngram_size_var.get(),
+                        "max_ngram_repeat": self.max_ngram_repeat_var.get(),
+                        "window_size": self.window_size_var.get(),
+                        "long_window_size": self.long_window_size_var.get(),
+                        "decay_factor": self.decay_factor_var.get(),
+                        "long_decay_factor": self.long_decay_factor_var.get()
+                    }
+                }
+            }
+            
             config_path = self.get_model_config_path()
             with open(config_path, "w") as f:
                 json.dump(config, f, indent=4)
             logger.info(f"Configuration saved for model {self.current_model_name}")
         except Exception as e:
             logger.error(f"Error saving configuration: {str(e)}")
+
+    def check_saved_configs(self):
+        """Check for existing configurations in the config directory"""
+        try:
+            # Ensure config directory exists
+            self.config_dir.mkdir(exist_ok=True)
+            
+            # List all config files
+            config_files = list(self.config_dir.glob("config_*.json"))
+            
+            if config_files:
+                logger.info(f"Found {len(config_files)} existing configurations:")
+                for config_file in config_files:
+                    try:
+                        with open(config_file, "r") as f:
+                            config = json.load(f)
+                        logger.info(f"  - {config['model_name']} (Last updated: {config['last_updated']})")
+                    except Exception as e:
+                        logger.warning(f"Error reading config file {config_file}: {str(e)}")
+            else:
+                logger.info("No existing configurations found")
+                
+            return config_files
+        except Exception as e:
+            logger.error(f"Error checking configurations: {str(e)}")
+            return []
 
     def load_model_config(self):
         """Load configuration for the current model"""
@@ -1476,6 +1505,7 @@ class EntropixTGUI:
 
     def generate_text(self, prompt: str):
         """Generate text with proper newline handling and automatic output saving"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         try:
             # Encode input with proper truncation
             input_ids = self.tokenizer.encode(
@@ -1492,7 +1522,8 @@ class EntropixTGUI:
             self.response_queue.put(("token", f"Prompt: {formatted_prompt}\n\nGenerated response:\n"))
             
             sampler = EntropixSampler(self.sampler_config)
-            generated_text = []  # Store generated tokens for output saving
+            generated_tokens = []  # Store all generated tokens
+            current_stats = {}  # Store current statistics
             
             with torch.inference_mode():
                 for _ in range(1000):  # Max tokens
@@ -1518,20 +1549,20 @@ class EntropixTGUI:
                     
                     if state == SamplerState.EOT or sampled_token[0] == self.tokenizer.eos_token_id:
                         self.response_queue.put(("token", "\n[End of Text]\n"))
-                        generated_text.append("[End of Text]")
+                        generated_tokens.append("[End of Text]")
                         break
                     
                     if state == SamplerState.INSERT_COT and sampled_token[0] == self.sampler_config.cot_token:
                         next_token_text = "[...]"
                         self.response_queue.put(("token", f"\n{next_token_text}\n"))
-                        generated_text.append(next_token_text)
+                        generated_tokens.append(next_token_text)
                     else:
                         # Decode token and handle special characters
                         next_token_text = self.tokenizer.decode(sampled_token[0])
                         # Replace literal \n with actual newlines
                         next_token_text = next_token_text.replace('\\n', '\n')
                         self.response_queue.put(("token", next_token_text))
-                        generated_text.append(next_token_text)
+                        generated_tokens.append(next_token_text)
                     
                     input_ids = torch.cat([input_ids, sampled_token], dim=-1)
                     attention_mask = torch.cat([
@@ -1541,19 +1572,79 @@ class EntropixTGUI:
                     
                     if input_ids.shape[1] >= self.model.config.max_position_embeddings:
                         self.response_queue.put(("token", "\n[Reached maximum sequence length]\n"))
-                        generated_text.append("[Reached maximum sequence length]")
+                        generated_tokens.append("[Reached maximum sequence length]")
                         break
                     
                     if _ % 5 == 0:  # Update stats periodically
-                        stats = sampler.calculate_metrics(logits, attention)
-                        self.response_queue.put(("stats", stats))
+                        current_stats = sampler.calculate_metrics(logits, attention)
+                        self.response_queue.put(("stats", current_stats))
+
+                # After generation, save the output
+                full_output = "".join(generated_tokens)
                 
-                # Automatically save the output after generation
-                self.save_generation_output(prompt, "".join(generated_text), sampler.get_final_stats())
+                # Ensure output directory exists
+                self.output_dir.mkdir(exist_ok=True)
+                
+                # Prepare the complete output content
+                output_content = [
+                    "=== Generation Information ===",
+                    f"Timestamp: {datetime.now().isoformat()}",
+                    f"Model: {self.current_model_name}",
+                    f"Model Hash: {self.current_model_hash}",
+                    "",
+                    "=== Prompt ===",
+                    prompt,
+                    "",
+                    "=== Generated Output ===",
+                    full_output,
+                    "",
+                    "=== Generation Statistics ===",
+                    f"Total Tokens: {sum(self.strategy_counter.values())}",
+                    "",
+                    "Strategy Usage:",
+                ]
+                
+                # Add strategy statistics
+                total_tokens = sum(self.strategy_counter.values())
+                if total_tokens > 0:
+                    for strategy, count in self.strategy_counter.most_common():
+                        percentage = (count / total_tokens) * 100
+                        output_content.append(f"  {strategy}: {count} ({percentage:.1f}%)")
+                
+                # Add final statistics and configuration
+                output_content.extend([
+                    "",
+                    "=== Current Statistics ===",
+                    json.dumps(current_stats, indent=2),
+                    "",
+                    "=== Configuration Used ===",
+                    json.dumps(self.get_current_config(), indent=2)
+                ])
+                
+                # Save to file
+                output_filename = f"{self.current_model_hash}_{timestamp}.txt"
+                output_path = self.output_dir / output_filename
+                
+                with open(output_path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(output_content))
+                
+                logger.info(f"Generation output saved to {output_path}")
+                
+                # Update the configuration if it was modified during generation
+                self.save_model_config()
                 
         except Exception as e:
             self.response_queue.put(("error", str(e)))
             logger.error(f"Generation error: {str(e)}")
+            # Try to save even if there was an error
+            try:
+                if generated_tokens:  # If we generated any output before the error
+                    error_output_path = self.output_dir / f"error_{self.current_model_hash}_{timestamp}.txt"
+                    with open(error_output_path, "w", encoding="utf-8") as f:
+                        f.write(f"Error during generation: {str(e)}\n\nPartial output:\n{''.join(generated_tokens)}")
+                    logger.info(f"Partial output saved to {error_output_path}")
+            except Exception as save_error:
+                logger.error(f"Error saving partial output: {str(save_error)}")
 
 
     def get_current_config(self):
@@ -1621,6 +1712,9 @@ class EntropixTGUI:
         """Save the generation output automatically with all context"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         try:
+            # Ensure output directory exists
+            self.output_dir.mkdir(exist_ok=True)
+            
             # Prepare output content
             content = [
                 "=== Generation Information ===",
