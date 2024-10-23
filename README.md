@@ -16,5 +16,5 @@ Run the script:
 
 python main_t.py
 
-![GUI 1]([https://github.com/EdwardDali/e-rag/blob/main/docs/gui1.PNG](https://github.com/EdwardDali/EntropixLab/blob/transformer/docs/GUI1.PNG))
-![GUI 2]([https://github.com/EdwardDali/e-rag/blob/main/docs/gui2.PNG](https://github.com/EdwardDali/EntropixLab/blob/transformer/docs/GUI1.PNG))
+![GUI 1]((https://github.com/EdwardDali/EntropixLab/blob/transformer/docs/GUI1.PNG))
+![GUI 2]((https://github.com/EdwardDali/EntropixLab/blob/transformer/docs/GUI1.PNG))
