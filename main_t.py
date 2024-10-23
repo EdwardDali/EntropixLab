@@ -222,13 +222,21 @@ class SamplerConfig:
         self.long_decay_factor = self._validate_float("long_decay_factor", 0.95, min_val=0.0, max_val=1.0)
 
         # Strategy-specific thresholds
+        # Strategy-specific thresholds
         self.argmax_entropy_thresh = self._validate_float("argmax_entropy_thresh", 0.1, min_val=0.0)
+        
         self.sample_min_entropy_thresh = self._validate_float("sample_min_entropy_thresh", 0.1, min_val=0.0)
         self.sample_max_entropy_thresh = self._validate_float("sample_max_entropy_thresh", 1.8, min_val=0.0)
+        self.sample_varentropy_thresh = self._validate_float("sample_varentropy_thresh", 0.1, min_val=0.0)
+        
         self.cot_min_entropy_thresh = self._validate_float("cot_min_entropy_thresh", 1.8, min_val=0.0)
         self.cot_max_entropy_thresh = self._validate_float("cot_max_entropy_thresh", 2.5, min_val=0.0)
+        self.cot_varentropy_thresh = self._validate_float("cot_varentropy_thresh", 0.1, min_val=0.0)
+        
         self.resample_min_entropy_thresh = self._validate_float("resample_min_entropy_thresh", 0.5, min_val=0.0)
         self.resample_max_entropy_thresh = self._validate_float("resample_max_entropy_thresh", 2.0, min_val=0.0)
+        self.resample_varentropy_thresh = self._validate_float("resample_varentropy_thresh", 3.0, min_val=0.0)
+        
         self.adaptive_entropy_thresh = self._validate_float("adaptive_entropy_thresh", 2.5, min_val=0.0)
         self.adaptive_varentropy_thresh = self._validate_float("adaptive_varentropy_thresh", 3.0, min_val=0.0)
 
@@ -604,24 +612,23 @@ class EntropixSampler:
         # Check each strategy's conditions in order of priority
         if rolling_entropy <= self.config.argmax_entropy_thresh:
             return SamplerState.ARGMAX
-            
+                
         if (self.config.sample_min_entropy_thresh <= rolling_entropy <= self.config.sample_max_entropy_thresh and 
-            rolling_varentropy < self.config.varentropy_threshold):
+            rolling_varentropy < self.config.sample_varentropy_thresh):
             return SamplerState.SAMPLE
-            
+                
         if (self.config.cot_min_entropy_thresh <= rolling_entropy <= self.config.cot_max_entropy_thresh and 
-            rolling_varentropy < self.config.varentropy_threshold):
+            rolling_varentropy < self.config.cot_varentropy_thresh):
             return SamplerState.INSERT_COT
-            
+                
         if (self.config.resample_min_entropy_thresh <= rolling_entropy <= self.config.resample_max_entropy_thresh and 
-            rolling_varentropy > self.config.high_vent_thresh):
+            rolling_varentropy > self.config.resample_varentropy_thresh):
             return SamplerState.RESAMPLE
-            
+                
         if (rolling_entropy >= self.config.adaptive_entropy_thresh and 
             rolling_varentropy >= self.config.adaptive_varentropy_thresh):
             return SamplerState.ADAPTIVE
-            
-        # Default to SAMPLE if no other conditions are met
+                
         return SamplerState.SAMPLE
 
     def sample(self, logits: torch.Tensor, attention: torch.Tensor) -> Tuple[torch.Tensor, SamplerState]:

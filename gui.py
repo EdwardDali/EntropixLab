@@ -114,12 +114,15 @@ PARAMETER_TOOLTIPS = {
         "argmax_entropy_thresh": "Maximum entropy threshold for using argmax sampling (highly confident)",
         "sample_min_entropy_thresh": "Minimum entropy threshold for using basic sampling",
         "sample_max_entropy_thresh": "Maximum entropy threshold for using basic sampling",
+        "sample_varentropy_thresh": "Maximum variance entropy threshold for basic sampling",
         "cot_min_entropy_thresh": "Minimum entropy threshold for inserting chain-of-thought tokens",
         "cot_max_entropy_thresh": "Maximum entropy threshold for inserting chain-of-thought tokens",
+        "cot_varentropy_thresh": "Maximum variance entropy threshold for chain-of-thought insertion",
         "resample_min_entropy_thresh": "Minimum entropy threshold for resampling strategy",
         "resample_max_entropy_thresh": "Maximum entropy threshold for resampling strategy",
+        "resample_varentropy_thresh": "Minimum variance entropy threshold for resampling",
         "adaptive_entropy_thresh": "Minimum entropy threshold for using adaptive sampling",
-        "adaptive_varentropy_thresh": "Minimum variance entropy threshold for using adaptive sampling"
+        "adaptive_varentropy_thresh": "Minimum variance entropy threshold for adaptive sampling"
     }
 }
 
@@ -727,14 +730,21 @@ class EntropixTGUI:
         # Add to initialize_parameter_vars
         self.strategy_change_batch_size_var = tk.IntVar(value=1)
 
-        # Strategy Selection Thresholds
+         # Strategy Selection Thresholds with paired varentropy
         self.argmax_entropy_thresh_var = tk.DoubleVar(value=0.1)
+        
         self.sample_min_entropy_thresh_var = tk.DoubleVar(value=0.1)
         self.sample_max_entropy_thresh_var = tk.DoubleVar(value=1.8)
+        self.sample_varentropy_thresh_var = tk.DoubleVar(value=0.1)  # New
+        
         self.cot_min_entropy_thresh_var = tk.DoubleVar(value=1.8)
         self.cot_max_entropy_thresh_var = tk.DoubleVar(value=2.5)
+        self.cot_varentropy_thresh_var = tk.DoubleVar(value=0.1)  # New
+        
         self.resample_min_entropy_thresh_var = tk.DoubleVar(value=0.5)
         self.resample_max_entropy_thresh_var = tk.DoubleVar(value=2.0)
+        self.resample_varentropy_thresh_var = tk.DoubleVar(value=3.0)  # New
+        
         self.adaptive_entropy_thresh_var = tk.DoubleVar(value=2.5)
         self.adaptive_varentropy_thresh_var = tk.DoubleVar(value=3.0)
 
@@ -1033,7 +1043,28 @@ class EntropixTGUI:
                         "long_window_size": self.long_window_size_var.get(),
                         "decay_factor": self.decay_factor_var.get(),
                         "long_decay_factor": self.long_decay_factor_var.get()
+
+                    },
+
+                    "strategy_thresholds": {
+                        "argmax_entropy_thresh": self.argmax_entropy_thresh_var.get(),
+                        
+                        "sample_min_entropy_thresh": self.sample_min_entropy_thresh_var.get(),
+                        "sample_max_entropy_thresh": self.sample_max_entropy_thresh_var.get(),
+                        "sample_varentropy_thresh": self.sample_varentropy_thresh_var.get(),
+                        
+                        "cot_min_entropy_thresh": self.cot_min_entropy_thresh_var.get(),
+                        "cot_max_entropy_thresh": self.cot_max_entropy_thresh_var.get(),
+                        "cot_varentropy_thresh": self.cot_varentropy_thresh_var.get(),
+                        
+                        "resample_min_entropy_thresh": self.resample_min_entropy_thresh_var.get(),
+                        "resample_max_entropy_thresh": self.resample_max_entropy_thresh_var.get(),
+                        "resample_varentropy_thresh": self.resample_varentropy_thresh_var.get(),
+                        
+                        "adaptive_entropy_thresh": self.adaptive_entropy_thresh_var.get(),
+                        "adaptive_varentropy_thresh": self.adaptive_varentropy_thresh_var.get()
                     }
+                        
                 }
             }
             
@@ -1151,14 +1182,21 @@ class EntropixTGUI:
             self.sampler_config.decay_factor = self.decay_factor_var.get()
             self.sampler_config.long_decay_factor = self.long_decay_factor_var.get()
 
-            # Strategy Selection Thresholds
+             # Strategy-specific thresholds
             self.sampler_config.argmax_entropy_thresh = self.argmax_entropy_thresh_var.get()
+            
             self.sampler_config.sample_min_entropy_thresh = self.sample_min_entropy_thresh_var.get()
             self.sampler_config.sample_max_entropy_thresh = self.sample_max_entropy_thresh_var.get()
+            self.sampler_config.sample_varentropy_thresh = self.sample_varentropy_thresh_var.get()
+            
             self.sampler_config.cot_min_entropy_thresh = self.cot_min_entropy_thresh_var.get()
             self.sampler_config.cot_max_entropy_thresh = self.cot_max_entropy_thresh_var.get()
+            self.sampler_config.cot_varentropy_thresh = self.cot_varentropy_thresh_var.get()
+            
             self.sampler_config.resample_min_entropy_thresh = self.resample_min_entropy_thresh_var.get()
             self.sampler_config.resample_max_entropy_thresh = self.resample_max_entropy_thresh_var.get()
+            self.sampler_config.resample_varentropy_thresh = self.resample_varentropy_thresh_var.get()
+            
             self.sampler_config.adaptive_entropy_thresh = self.adaptive_entropy_thresh_var.get()
             self.sampler_config.adaptive_varentropy_thresh = self.adaptive_varentropy_thresh_var.get()
             
@@ -1319,28 +1357,34 @@ class EntropixTGUI:
 
     def create_entropy_controls(self, parent):
         """Create entropy threshold controls with strategy-specific sections"""
-        # Basic entropy thresholds
-        basic_group = ttk.LabelFrame(parent, text="Basic Entropy Thresholds", padding=5)
-        basic_group.pack(fill="x", padx=5, pady=5)
+        scrollable_frame = ttk.Frame(parent)
+        scrollable_frame.pack(fill="both", expand=True)
         
-        self.create_slider_with_tooltip(
-            basic_group, "Varentropy Threshold", self.varentropy_threshold_var, 0.0, 1.0,
-            PARAMETER_TOOLTIPS["entropy_thresholds"]["varentropy_threshold"]
-        )
-
+        canvas = tk.Canvas(scrollable_frame)
+        scrollbar = ttk.Scrollbar(scrollable_frame, orient="vertical", command=canvas.yview)
+        inner_frame = ttk.Frame(canvas)
+        
+        # Configure scrolling
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        canvas_frame = canvas.create_window((0, 0), window=inner_frame, anchor="nw")
+        
+        def on_frame_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        inner_frame.bind("<Configure>", on_frame_configure)
+        
         # Argmax Strategy
-        argmax_group = ttk.LabelFrame(parent, text="Argmax Strategy", padding=5)
+        argmax_group = ttk.LabelFrame(inner_frame, text="Argmax Strategy", padding=5)
         argmax_group.pack(fill="x", padx=5, pady=5)
-        
         self.create_slider_with_tooltip(
             argmax_group, "Max Entropy", self.argmax_entropy_thresh_var, 0.0, 1.0,
             PARAMETER_TOOLTIPS["strategy_thresholds"]["argmax_entropy_thresh"]
         )
 
         # Basic Sampling Strategy
-        sample_group = ttk.LabelFrame(parent, text="Basic Sampling Strategy", padding=5)
+        sample_group = ttk.LabelFrame(inner_frame, text="Basic Sampling Strategy", padding=5)
         sample_group.pack(fill="x", padx=5, pady=5)
-        
         self.create_slider_with_tooltip(
             sample_group, "Min Entropy", self.sample_min_entropy_thresh_var, 0.0, 2.0,
             PARAMETER_TOOLTIPS["strategy_thresholds"]["sample_min_entropy_thresh"]
@@ -1349,11 +1393,14 @@ class EntropixTGUI:
             sample_group, "Max Entropy", self.sample_max_entropy_thresh_var, 0.0, 3.0,
             PARAMETER_TOOLTIPS["strategy_thresholds"]["sample_max_entropy_thresh"]
         )
+        self.create_slider_with_tooltip(
+            sample_group, "Max Varentropy", self.sample_varentropy_thresh_var, 0.0, 1.0,
+            PARAMETER_TOOLTIPS["strategy_thresholds"]["sample_varentropy_thresh"]
+        )
 
         # Chain of Thought Strategy
-        cot_group = ttk.LabelFrame(parent, text="Chain of Thought Strategy", padding=5)
+        cot_group = ttk.LabelFrame(inner_frame, text="Chain of Thought Strategy", padding=5)
         cot_group.pack(fill="x", padx=5, pady=5)
-        
         self.create_slider_with_tooltip(
             cot_group, "Min Entropy", self.cot_min_entropy_thresh_var, 0.0, 3.0,
             PARAMETER_TOOLTIPS["strategy_thresholds"]["cot_min_entropy_thresh"]
@@ -1362,11 +1409,14 @@ class EntropixTGUI:
             cot_group, "Max Entropy", self.cot_max_entropy_thresh_var, 0.0, 5.0,
             PARAMETER_TOOLTIPS["strategy_thresholds"]["cot_max_entropy_thresh"]
         )
+        self.create_slider_with_tooltip(
+            cot_group, "Max Varentropy", self.cot_varentropy_thresh_var, 0.0, 1.0,
+            PARAMETER_TOOLTIPS["strategy_thresholds"]["cot_varentropy_thresh"]
+        )
 
         # Resample Strategy
-        resample_group = ttk.LabelFrame(parent, text="Resample Strategy", padding=5)
+        resample_group = ttk.LabelFrame(inner_frame, text="Resample Strategy", padding=5)
         resample_group.pack(fill="x", padx=5, pady=5)
-        
         self.create_slider_with_tooltip(
             resample_group, "Min Entropy", self.resample_min_entropy_thresh_var, 0.0, 3.0,
             PARAMETER_TOOLTIPS["strategy_thresholds"]["resample_min_entropy_thresh"]
@@ -1375,11 +1425,14 @@ class EntropixTGUI:
             resample_group, "Max Entropy", self.resample_max_entropy_thresh_var, 0.0, 5.0,
             PARAMETER_TOOLTIPS["strategy_thresholds"]["resample_max_entropy_thresh"]
         )
+        self.create_slider_with_tooltip(
+            resample_group, "Min Varentropy", self.resample_varentropy_thresh_var, 0.0, 5.0,
+            PARAMETER_TOOLTIPS["strategy_thresholds"]["resample_varentropy_thresh"]
+        )
 
         # Adaptive Strategy
-        adaptive_group = ttk.LabelFrame(parent, text="Adaptive Strategy", padding=5)
+        adaptive_group = ttk.LabelFrame(inner_frame, text="Adaptive Strategy", padding=5)
         adaptive_group.pack(fill="x", padx=5, pady=5)
-        
         self.create_slider_with_tooltip(
             adaptive_group, "Min Entropy", self.adaptive_entropy_thresh_var, 0.0, 5.0,
             PARAMETER_TOOLTIPS["strategy_thresholds"]["adaptive_entropy_thresh"]
@@ -1388,6 +1441,13 @@ class EntropixTGUI:
             adaptive_group, "Min Varentropy", self.adaptive_varentropy_thresh_var, 0.0, 5.0,
             PARAMETER_TOOLTIPS["strategy_thresholds"]["adaptive_varentropy_thresh"]
         )
+
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        
+        # Bind mousewheel to canvas and all children
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
+        
     def create_adaptive_controls(self, parent):
         """Create adaptive sampling controls"""
         adaptive_group = ttk.LabelFrame(parent, text="Adaptive Parameters", padding=5)
@@ -1792,10 +1852,13 @@ class EntropixTGUI:
                     "argmax_entropy_thresh": self.argmax_entropy_thresh_var.get(),
                     "sample_min_entropy_thresh": self.sample_min_entropy_thresh_var.get(),
                     "sample_max_entropy_thresh": self.sample_max_entropy_thresh_var.get(),
+                    "sample_varentropy_thresh": self.sample_varentropy_thresh_var.get(),
                     "cot_min_entropy_thresh": self.cot_min_entropy_thresh_var.get(),
                     "cot_max_entropy_thresh": self.cot_max_entropy_thresh_var.get(),
+                    "cot_varentropy_thresh": self.cot_varentropy_thresh_var.get(),
                     "resample_min_entropy_thresh": self.resample_min_entropy_thresh_var.get(),
                     "resample_max_entropy_thresh": self.resample_max_entropy_thresh_var.get(),
+                    "resample_varentropy_thresh": self.resample_varentropy_thresh_var.get(),
                     "adaptive_entropy_thresh": self.adaptive_entropy_thresh_var.get(),
                     "adaptive_varentropy_thresh": self.adaptive_varentropy_thresh_var.get()
                 }
@@ -1815,8 +1878,8 @@ class EntropixTGUI:
             # Ensure output directory exists
             self.output_dir.mkdir(exist_ok=True)
             
-            # Prepare output content
-            content = [
+            # Prepare the complete output content
+            output_content = [
                 "=== Generation Information ===",
                 f"Timestamp: {datetime.now().isoformat()}",
                 f"Model: {self.current_model_name}",
@@ -1830,6 +1893,7 @@ class EntropixTGUI:
                 "",
                 "=== Generation Statistics ===",
                 f"Total Tokens: {sum(self.strategy_counter.values())}",
+                "",
                 "Strategy Usage:",
             ]
             
@@ -1838,26 +1902,102 @@ class EntropixTGUI:
             if total_tokens > 0:
                 for strategy, count in self.strategy_counter.most_common():
                     percentage = (count / total_tokens) * 100
-                    content.append(f"  {strategy}: {count} ({percentage:.1f}%)")
+                    output_content.append(f"  {strategy}: {count} ({percentage:.1f}%)")
             
-            # Add final statistics
-            content.extend([
+            # Add strategy thresholds
+            output_content.extend([
                 "",
-                "=== Final Statistics ===",
+                "=== Strategy Thresholds ===",
+                "Argmax Strategy:",
+                f"  Max Entropy: {self.argmax_entropy_thresh_var.get():.3f}",
+                
+                "\nBasic Sampling Strategy:",
+                f"  Min Entropy: {self.sample_min_entropy_thresh_var.get():.3f}",
+                f"  Max Entropy: {self.sample_max_entropy_thresh_var.get():.3f}",
+                f"  Max Varentropy: {self.sample_varentropy_thresh_var.get():.3f}",
+                
+                "\nChain of Thought Strategy:",
+                f"  Min Entropy: {self.cot_min_entropy_thresh_var.get():.3f}",
+                f"  Max Entropy: {self.cot_max_entropy_thresh_var.get():.3f}",
+                f"  Max Varentropy: {self.cot_varentropy_thresh_var.get():.3f}",
+                
+                "\nResample Strategy:",
+                f"  Min Entropy: {self.resample_min_entropy_thresh_var.get():.3f}",
+                f"  Max Entropy: {self.resample_max_entropy_thresh_var.get():.3f}",
+                f"  Min Varentropy: {self.resample_varentropy_thresh_var.get():.3f}",
+                
+                "\nAdaptive Strategy:",
+                f"  Min Entropy: {self.adaptive_entropy_thresh_var.get():.3f}",
+                f"  Min Varentropy: {self.adaptive_varentropy_thresh_var.get():.3f}",
+                "",
+                "=== Current Statistics ===",
                 json.dumps(final_stats, indent=2),
                 "",
-                "=== Configuration Used ===",
-                json.dumps(self.get_current_config(), indent=2)
+                "=== Complete Configuration ===",
+                "Basic Sampling Parameters:",
+                f"  Temperature: {self.temp_var.get():.3f}",
+                f"  Top-P: {self.top_p_var.get():.3f}",
+                f"  Top-K: {self.top_k_var.get()}",
+                f"  Min-P: {self.min_p_var.get():.3f}",
+                f"  Repetition Penalty: {self.repetition_penalty_var.get():.3f}",
+                f"  Strategy Change Batch Size: {self.strategy_change_batch_size_var.get()}",
+                
+                "\nAdaptive Sampling Parameters:",
+                f"  Temperature Logits: {self.ada_temp_logits_var.get():.3f}",
+                f"  Temperature Attention: {self.ada_temp_attn_var.get():.3f}",
+                f"  Temperature Agreement: {self.ada_temp_agree_var.get():.3f}",
+                f"  Adaptive Samples: {self.n_adaptive_samples_var.get()}",
+                
+                "\nAttention Coefficients:",
+                f"  HELV Attention Entropy Offset: {self.helv_attn_ent_offset_var.get():.3f}",
+                f"  HELV Attention Entropy Coefficient: {self.helv_attn_ent_coef_var.get():.3f}",
+                f"  LEHV Interaction Strength Offset: {self.lehv_interaction_strength_offset_var.get():.3f}",
+                f"  LEHV Interaction Strength Coefficient: {self.lehv_interaction_strength_coef_var.get():.3f}",
+                f"  HEHV Attention Entropy Coefficient: {self.hehv_attn_ent_coef_var.get():.3f}",
+                f"  HEHV Attention Variance Offset: {self.hehv_attn_vent_offset_var.get():.3f}",
+                f"  HEHV Attention Variance Coefficient: {self.hehv_attn_vent_coef_var.get():.3f}",
+                
+                "\nRoPE Parameters:",
+                f"  Theta: {self.rope_theta_var.get():.1f}",
+                f"  Scaling: {self.rope_scaling_var.get():.3f}",
+                f"  Scale Base: {self.rope_scale_base_var.get():.3f}",
+                f"  Scale Factor: {self.rope_scale_factor_var.get():.3f}",
+                
+                "\nMemory and Context Parameters:",
+                f"  Max N-gram Size: {self.max_ngram_size_var.get()}",
+                f"  Max N-gram Repeat: {self.max_ngram_repeat_var.get()}",
+                f"  Window Size: {self.window_size_var.get()}",
+                f"  Long Window Size: {self.long_window_size_var.get()}",
+                f"  Decay Factor: {self.decay_factor_var.get():.3f}",
+                f"  Long Decay Factor: {self.long_decay_factor_var.get():.3f}",
+                
+                "\n=== Generation Settings ===",
+                f"Max Tokens: 1000",
+                f"Device: {device}",
+                f"Model Max Length: {self.model.config.max_position_embeddings if self.model else None}",
+                f"Truncation Length: {self.model.config.max_position_embeddings - 1000 if self.model else None}",
             ])
             
-            # Save the file
-            output_path = self.output_dir / f"{self.current_model_hash}_{timestamp}.txt"
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(content))
+            # Save to file
+            output_filename = f"{self.current_model_hash}_{timestamp}.txt"
+            output_path = self.output_dir / output_filename
             
-            logger.info(f"Output saved to {output_path}")
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(output_content))
+            
+            logger.info(f"Generation output saved to {output_path}")
+                    
         except Exception as e:
             logger.error(f"Error saving output: {str(e)}")
+            # Try to save even if there was an error
+            try:
+                if generated_text:  # If we generated any output before the error
+                    error_output_path = self.output_dir / f"error_{self.current_model_hash}_{timestamp}.txt"
+                    with open(error_output_path, "w", encoding="utf-8") as f:
+                        f.write(f"Error during generation: {str(e)}\n\nPartial output:\n{generated_text}")
+                    logger.info(f"Partial output saved to {error_output_path}")
+            except Exception as save_error:
+                logger.error(f"Error saving partial output: {str(save_error)}")
 
 def main():
     """Main function to run the Entropix GUI"""
