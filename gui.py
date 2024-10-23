@@ -71,7 +71,8 @@ PARAMETER_TOOLTIPS = {
         "top_p": "Nucleus sampling threshold. Cumulative probability cutoff.",
         "top_k": "Top-k sampling. Number of highest probability tokens to consider.",
         "min_p": "Minimum probability threshold for token selection.",
-        "repetition_penalty": "Penalty applied to repeated tokens."
+        "repetition_penalty": "Penalty applied to repeated tokens.",
+        "strategy_change_batch_size": "Number of tokens to generate before allowing sampling strategy changes"
     },
     "entropy_thresholds": {
         "low_ent_thresh": "Threshold for low entropy detection. Below this triggers argmax sampling.",
@@ -712,6 +713,9 @@ class EntropixTGUI:
         self.decay_factor_var = tk.DoubleVar(value=0.95)
         self.long_decay_factor_var = tk.DoubleVar(value=0.95)
 
+        # Add to initialize_parameter_vars
+        self.strategy_change_batch_size_var = tk.IntVar(value=1)
+
     def create_parameter_controls(self, parent):
         """Create organized parameter controls with additional tab"""
         # Create notebook for tabbed organization
@@ -1087,6 +1091,7 @@ class EntropixTGUI:
             self.sampler_config.top_k = self.top_k_var.get()
             self.sampler_config.min_p = self.min_p_var.get()
             self.sampler_config.repetition_penalty = self.repetition_penalty_var.get()
+            self.sampler_config.strategy_change_batch_size = self.strategy_change_batch_size_var.get()
             
             # Entropy thresholds
             self.sampler_config.low_ent_thresh = self.low_ent_thresh_var.get()
@@ -1123,6 +1128,8 @@ class EntropixTGUI:
             self.sampler_config.long_window_size = self.long_window_size_var.get()
             self.sampler_config.decay_factor = self.decay_factor_var.get()
             self.sampler_config.long_decay_factor = self.long_decay_factor_var.get()
+
+            
             
             # Save configuration
             self.save_config()
@@ -1226,6 +1233,11 @@ class EntropixTGUI:
         self.create_slider_with_tooltip(
             group, "Repetition Penalty", self.repetition_penalty_var, 1.0, 2.0,
             PARAMETER_TOOLTIPS["basic_sampling"]["repetition_penalty"]
+        )
+
+        self.create_slider_with_tooltip(
+            group, "Strategy Change Batch Size", self.strategy_change_batch_size_var, 1, 10,
+            "Number of tokens to generate before allowing strategy changes"
         )
 
     def create_slider(self, parent, label: str, variable: tk.Variable, min_val: float, max_val: float, integer: bool = False):
@@ -1661,7 +1673,8 @@ class EntropixTGUI:
                     "top_p": self.top_p_var.get(),
                     "top_k": self.top_k_var.get(),
                     "min_p": self.min_p_var.get(),
-                    "repetition_penalty": self.repetition_penalty_var.get()
+                    "repetition_penalty": self.repetition_penalty_var.get(),
+                    "strategy_change_batch_size": self.strategy_change_batch_size_var.get()
                 },
                 "entropy_thresholds": {
                     "low_ent_thresh": self.low_ent_thresh_var.get(),
