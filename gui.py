@@ -12,6 +12,9 @@ from threading import Lock
 import platformdirs
 import re
 from pathlib import Path
+from datetime import datetime
+import json
+import hashlib
 
 # Import from main_t
 from main_t import (
@@ -24,6 +27,8 @@ from main_t import (
     logger,
     EntropixSampler
 )
+
+
 
 class ToolTip:
     """Tooltip widget implementation"""
@@ -269,26 +274,398 @@ class EntropixTGUI:
         # Initialize all parameter variables before GUI setup
         self.initialize_parameter_vars()
         
-        self.setup_gui()
+        # Create main notebook for primary tabs
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Create widgets and setup GUI
+        self.create_widgets()
+
+        # Create directories if they don't exist
+        self.output_dir = Path("outputs")
+        self.output_dir.mkdir(exist_ok=True)
+        
+        self.config_dir = Path("configs")
+        self.config_dir.mkdir(exist_ok=True)
+        
+        # Track current model info
+        self.current_model_hash = None
+        self.current_model_name = None
+
+    def create_widgets(self):
+        """Create and setup all GUI widgets"""
+        # Create main tab
+        self.main_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.main_tab, text="Main")
+        
+        # Create controls tab
+        self.controls_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.controls_tab, text="Controls")
+        
+        # Setup main tab components
+        self.create_main_tab()
+        
+        # Setup controls tab components
+        self.create_controls_tab()
+
+    
+
+    def create_main_tab(self):
+        """Create main tab with model selection, input, and output areas"""
+        # Model frame
+        model_frame = ttk.LabelFrame(self.main_tab, text="Model", padding="5")
+        model_frame.pack(fill="x", padx=5, pady=5)
         self.create_model_selector()
+        
+        # Input frame
+        input_frame = ttk.LabelFrame(self.main_tab, text="Input", padding="5")
+        input_frame.pack(fill="x", padx=5, pady=5)
+        self.create_input_area(input_frame)
+        
+        # Output frame
+        output_frame = ttk.LabelFrame(self.main_tab, text="Output", padding="5")
+        output_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        self.create_output_areas(output_frame)
+
+    def create_controls_tab(self):
+        """Create organized parameter controls in the Controls tab"""
+        # Create notebook for tabbed organization within Controls tab
+        control_notebook = ttk.Notebook(self.controls_tab)
+        control_notebook.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # Basic Sampling tab
+        basic_frame = ttk.Frame(control_notebook)
+        control_notebook.add(basic_frame, text="Basic Sampling")
+        self.create_basic_controls(basic_frame)
+
+        # Entropy & Strategy tab
+        entropy_frame = ttk.Frame(control_notebook)
+        control_notebook.add(entropy_frame, text="Entropy & Strategy")
+        self.create_entropy_controls(entropy_frame)
+
+        # Adaptive Sampling tab
+        adaptive_frame = ttk.Frame(control_notebook)
+        control_notebook.add(adaptive_frame, text="Adaptive")
+        self.create_adaptive_controls(adaptive_frame)
+
+        # Attention Coefficients tab
+        attention_frame = ttk.Frame(control_notebook)
+        control_notebook.add(attention_frame, text="Attention")
+        self.create_attention_controls(attention_frame)
+
+        # RoPE & Position tab
+        rope_frame = ttk.Frame(control_notebook)
+        control_notebook.add(rope_frame, text="RoPE")
+        self.create_rope_controls(rope_frame)
+
+        # Memory & Context tab
+        memory_frame = ttk.Frame(control_notebook)
+        control_notebook.add(memory_frame, text="Memory")
+        self.create_memory_controls(memory_frame)
+
+    def create_save_buttons(self):
+        """Add save buttons to the interface"""
+        save_frame = ttk.Frame(self.main_tab)
+        save_frame.pack(fill="x", padx=5, pady=5)
+        
+        ttk.Button(
+            save_frame,
+            text="Save Configuration",
+            command=self.save_current_config
+        ).pack(side="left", padx=5)
+        
+        ttk.Button(
+            save_frame,
+            text="Save Output",
+            command=self.save_output
+        ).pack(side="left", padx=5)
+
+    def save_current_config(self):
+        """Save current configuration to a timestamped JSON file"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        config = {
+            "basic_sampling": {
+                "temp": self.temp_var.get(),
+                "top_p": self.top_p_var.get(),
+                "top_k": self.top_k_var.get(),
+                "min_p": self.min_p_var.get(),
+                "repetition_penalty": self.repetition_penalty_var.get()
+            },
+            "entropy_thresholds": {
+                "low_ent_thresh": self.low_ent_thresh_var.get(),
+                "med_ent_thresh": self.med_ent_thresh_var.get(),
+                "high_ent_thresh": self.high_ent_thresh_var.get(),
+                "high_vent_thresh": self.high_vent_thresh_var.get(),
+                "varentropy_threshold": self.varentropy_threshold_var.get()
+            },
+            "adaptive_sampling": {
+                "ada_temp_logits": self.ada_temp_logits_var.get(),
+                "ada_temp_attn": self.ada_temp_attn_var.get(),
+                "ada_temp_agree": self.ada_temp_agree_var.get(),
+                "n_adaptive_samples": self.n_adaptive_samples_var.get()
+            },
+            "rope_parameters": {
+                "rope_theta": self.rope_theta_var.get(),
+                "rope_scaling": self.rope_scaling_var.get(),
+                "rope_scale_base": self.rope_scale_base_var.get(),
+                "rope_scale_factor": self.rope_scale_factor_var.get()
+            },
+            "attention_coefficients": {
+                "helv_attn_ent_offset": self.helv_attn_ent_offset_var.get(),
+                "helv_attn_ent_coef": self.helv_attn_ent_coef_var.get(),
+                "lehv_interaction_strength_offset": self.lehv_interaction_strength_offset_var.get(),
+                "lehv_interaction_strength_coef": self.lehv_interaction_strength_coef_var.get(),
+                "hehv_attn_ent_coef": self.hehv_attn_ent_coef_var.get(),
+                "hehv_attn_vent_offset": self.hehv_attn_vent_offset_var.get(),
+                "hehv_attn_vent_coef": self.hehv_attn_vent_coef_var.get()
+            },
+            "memory_context": {
+                "max_ngram_size": self.max_ngram_size_var.get(),
+                "max_ngram_repeat": self.max_ngram_repeat_var.get(),
+                "window_size": self.window_size_var.get(),
+                "long_window_size": self.long_window_size_var.get(),
+                "decay_factor": self.decay_factor_var.get(),
+                "long_decay_factor": self.long_decay_factor_var.get()
+            }
+        }
+        
+        # Save as both current config and timestamped config
+        try:
+            # Save as current config (for loading on startup)
+            current_config_path = self.config_dir / "current_config.json"
+            with open(current_config_path, "w") as f:
+                json.dump(config, f, indent=4)
+            
+            # Save timestamped version
+            config_path = self.config_dir / f"config_{timestamp}.json"
+            with open(config_path, "w") as f:
+                json.dump(config, f, indent=4)
+            
+            self.output_text.insert("end", f"\nConfiguration saved to {config_path}\n")
+            logger.info(f"Configuration saved to {config_path}")
+        except Exception as e:
+            self.output_text.insert("end", f"\nError saving configuration: {str(e)}\n")
+            logger.error(f"Error saving configuration: {str(e)}")
+
+    def save_output(self):
+        """Save current output to a timestamped text file"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        try:
+            # Get the entire output text
+            output_text = self.output_text.get("1.0", "end-1c")
+            
+            # Add generation statistics
+            output_text += "\n\n=== Generation Statistics ===\n"
+            total_tokens = sum(self.strategy_counter.values())
+            if total_tokens > 0:
+                for strategy, count in self.strategy_counter.most_common():
+                    percentage = (count / total_tokens) * 100
+                    output_text += f"{strategy}: {count} ({percentage:.1f}%)\n"
+            
+            # Add configuration used
+            output_text += "\n=== Configuration Used ===\n"
+            current_config = {
+                "basic_sampling": {
+                    "temp": self.temp_var.get(),
+                    "top_p": self.top_p_var.get(),
+                    "top_k": self.top_k_var.get(),
+                    "min_p": self.min_p_var.get(),
+                    "repetition_penalty": self.repetition_penalty_var.get()
+                },
+                # ... (add other configuration sections)
+            }
+            output_text += json.dumps(current_config, indent=4)
+            
+            # Save the file
+            output_path = self.output_dir / f"output_{timestamp}.txt"
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(output_text)
+            
+            self.output_text.insert("end", f"\nOutput saved to {output_path}\n")
+            logger.info(f"Output saved to {output_path}")
+        except Exception as e:
+            self.output_text.insert("end", f"\nError saving output: {str(e)}\n")
+            logger.error(f"Error saving output: {str(e)}")
+
+    def load_config(self):
+        """Load configuration from file"""
+        try:
+            # Try to load the current configuration
+            current_config_path = self.config_dir / "current_config.json"
+            if not current_config_path.exists():
+                logger.info("No saved configuration found, using defaults")
+                return
+                
+            with open(current_config_path, "r") as f:
+                config = json.load(f)
+                
+            # Update all GUI variables from loaded config
+            for section, params in config.items():
+                for param, value in params.items():
+                    var = getattr(self, f"{param}_var", None)
+                    if var:
+                        var.set(value)
+                        
+            logger.info("Configuration loaded successfully")
+            self.update_config()
+        except Exception as e:
+            logger.error(f"Error loading configuration: {str(e)}")
 
     def setup_gui(self):
-        # Create main frames
-        model_frame = ttk.LabelFrame(self.root, text="Model Selection", padding="5")
+        """Setup main GUI with tabs for main interface and controls"""
+        # Create main notebook for primary tabs
+        self.main_notebook = ttk.Notebook(self.root)
+        self.main_notebook.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Create main interface tab
+        main_tab = ttk.Frame(self.main_notebook)
+        self.main_notebook.add(main_tab, text="Main")
+        
+        # Create controls tab
+        controls_tab = ttk.Frame(self.main_notebook)
+        self.main_notebook.add(controls_tab, text="Controls")
+        
+        # Setup main interface components
+        self.setup_main_interface(main_tab)
+        
+        # Setup controls interface
+        self.setup_controls_interface(controls_tab)
+
+    def setup_main_interface(self, parent):
+        """Setup the main interface tab with model selection, input, and output"""
+        # Model frame
+        model_frame = ttk.LabelFrame(parent, text="Model", padding="5")
         model_frame.pack(fill="x", padx=5, pady=5)
-
-        control_frame = ttk.LabelFrame(self.root, text="Controls", padding="5")
-        control_frame.pack(fill="x", padx=5, pady=5)
-
-        input_frame = ttk.LabelFrame(self.root, text="Input", padding="5")
+        
+        # Model selection frame
+        model_select_frame = ttk.Frame(model_frame)
+        model_select_frame.pack(fill="x", pady=5)
+        
+        ttk.Label(model_select_frame, text="Model:").pack(side="left", padx=5)
+        
+        # Create model dropdown
+        self.model_var = tk.StringVar()
+        self.model_combo = ttk.Combobox(
+            model_select_frame, 
+            textvariable=self.model_var,
+            width=50
+        )
+        self.model_combo.pack(side="left", padx=5, fill="x", expand=True)
+        
+        # Model buttons frame
+        btn_frame = ttk.Frame(model_frame)
+        btn_frame.pack(fill="x", pady=5)
+        
+        ttk.Button(
+            btn_frame,
+            text="Scan Default Directory",
+            command=self.rescan_models
+        ).pack(side="left", padx=5)
+        
+        ttk.Button(
+            btn_frame,
+            text="Select Custom Directory",
+            command=self.select_custom_dir
+        ).pack(side="left", padx=5)
+        
+        ttk.Button(
+            btn_frame,
+            text="Load Model",
+            command=self.load_selected_model
+        ).pack(side="left", padx=5)
+        
+        # Model info display
+        self.model_info = ttk.Label(model_frame, text="No model loaded")
+        self.model_info.pack(fill="x", padx=5)
+        
+        # Input frame
+        input_frame = ttk.LabelFrame(parent, text="Input", padding="5")
         input_frame.pack(fill="x", padx=5, pady=5)
-
-        output_frame = ttk.LabelFrame(self.root, text="Output", padding="5")
+        
+        # Input text area
+        self.prompt_input = scrolledtext.ScrolledText(input_frame, height=5)
+        self.prompt_input.pack(fill="x", expand=True, padx=5, pady=5)
+        
+        # Input buttons
+        input_btn_frame = ttk.Frame(input_frame)
+        input_btn_frame.pack(fill="x", pady=5)
+        
+        ttk.Button(input_btn_frame, text="Generate", command=self.start_generation).pack(side="left", padx=5)
+        ttk.Button(input_btn_frame, text="Stop", command=self.stop_generation_request).pack(side="left", padx=5)
+        ttk.Button(input_btn_frame, text="Clear", command=self.clear_output).pack(side="left", padx=5)
+        
+        # Output frame with increased height
+        output_frame = ttk.LabelFrame(parent, text="Output", padding="5")
         output_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Output text area
+        self.output_text = scrolledtext.ScrolledText(output_frame, height=30)
+        self.output_text.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Statistics area
+        stats_frame = ttk.LabelFrame(output_frame, text="Statistics", padding="5")
+        stats_frame.pack(fill="x", padx=5, pady=5)
+        
+        # Create three columns for statistics
+        left_stats = ttk.Frame(stats_frame)
+        left_stats.pack(side="left", fill="both", expand=True)
+        
+        middle_stats = ttk.Frame(stats_frame)
+        middle_stats.pack(side="left", fill="both", expand=True)
+        
+        right_stats = ttk.Frame(stats_frame)
+        right_stats.pack(side="left", fill="both", expand=True)
+        
+        # Initialize stat_labels dictionary
+        self.stat_labels = {}
+        
+        # Strategy counter in left column
+        self.strategy_var = tk.StringVar(value="Strategy Usage: N/A")
+        ttk.Label(left_stats, textvariable=self.strategy_var).pack(anchor="w")
+        
+        # Entropy metrics in middle column
+        entropy_metrics = ["Entropy", "Varentropy", "Attn Entropy"]
+        for metric in entropy_metrics:
+            var = tk.StringVar(value=f"{metric}: N/A")
+            self.stat_labels[metric] = var
+            ttk.Label(middle_stats, textvariable=var).pack(anchor="w")
+        
+        # Additional metrics in right column
+        additional_metrics = ["Rolling Entropy", "Rolling Varentropy", "Current Strategy"]
+        for metric in additional_metrics:
+            var = tk.StringVar(value=f"{metric}: N/A")
+            self.stat_labels[metric] = var
+            ttk.Label(right_stats, textvariable=var).pack(anchor="w")
 
-        self.create_parameter_controls(control_frame)
-        self.create_input_area(input_frame)
-        self.create_output_areas(output_frame)
+    def setup_controls_interface(self, parent):
+        """Setup the controls interface tab with all parameter controls"""
+        # Create notebook for control categories
+        control_notebook = ttk.Notebook(parent)
+        control_notebook.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Create frames for each control category
+        basic_frame = ttk.Frame(control_notebook)
+        entropy_frame = ttk.Frame(control_notebook)
+        adaptive_frame = ttk.Frame(control_notebook)
+        attention_frame = ttk.Frame(control_notebook)
+        rope_frame = ttk.Frame(control_notebook)
+        memory_frame = ttk.Frame(control_notebook)
+        
+        # Add frames to notebook
+        control_notebook.add(basic_frame, text="Basic Sampling")
+        control_notebook.add(entropy_frame, text="Entropy & Strategy")
+        control_notebook.add(adaptive_frame, text="Adaptive")
+        control_notebook.add(attention_frame, text="Attention")
+        control_notebook.add(rope_frame, text="RoPE")
+        control_notebook.add(memory_frame, text="Memory")
+        
+        # Create controls in each frame
+        self.create_basic_controls(basic_frame)
+        self.create_entropy_controls(entropy_frame)
+        self.create_adaptive_controls(adaptive_frame)
+        self.create_attention_controls(attention_frame)
+        self.create_rope_controls(rope_frame)
+        self.create_memory_controls(memory_frame)
 
     def initialize_parameter_vars(self):
         """Initialize all parameter variables with defaults from main_t"""
@@ -336,7 +713,7 @@ class EntropixTGUI:
         self.long_decay_factor_var = tk.DoubleVar(value=0.95)
 
     def create_parameter_controls(self, parent):
-        """Create organized parameter controls"""
+        """Create organized parameter controls with additional tab"""
         # Create notebook for tabbed organization
         notebook = ttk.Notebook(parent)
         notebook.pack(fill="both", expand=True, padx=5, pady=5)
@@ -353,7 +730,7 @@ class EntropixTGUI:
 
         # Adaptive Sampling tab
         adaptive_frame = ttk.Frame(notebook)
-        notebook.add(adaptive_frame, text="Adaptive Sampling")
+        notebook.add(adaptive_frame, text="Adaptive")
         self.create_adaptive_controls(adaptive_frame)
 
         # Attention Coefficients tab
@@ -363,16 +740,28 @@ class EntropixTGUI:
 
         # RoPE & Position tab
         rope_frame = ttk.Frame(notebook)
-        notebook.add(rope_frame, text="RoPE & Position")
+        notebook.add(rope_frame, text="RoPE")
         self.create_rope_controls(rope_frame)
 
         # Memory & Context tab
         memory_frame = ttk.Frame(notebook)
-        notebook.add(memory_frame, text="Memory & Context")
+        notebook.add(memory_frame, text="Memory")
         self.create_memory_controls(memory_frame)
 
+        # Advanced Settings tab (new)
+        advanced_frame = ttk.Frame(notebook)
+        notebook.add(advanced_frame, text="Advanced")
+        self.create_advanced_controls(advanced_frame)
+
+    def create_advanced_controls(self, parent):
+        """Create advanced settings controls"""
+        # You can move some of the less frequently used controls here
+        pass
+
     def create_model_selector(self):
-        frame = ttk.Frame(self.root.children['!labelframe'])
+        """Create model selection interface"""
+        # Create frame in main tab
+        frame = ttk.Frame(self.main_tab)
         frame.pack(fill="x", padx=5, pady=5)
         
         # Model selection frame
@@ -421,8 +810,8 @@ class EntropixTGUI:
 
     def create_input_area(self, parent):
         """Create the input area with prompt textbox"""
-        # Input text area
-        self.prompt_input = scrolledtext.ScrolledText(parent, height=4)
+        # Input text area with reduced height
+        self.prompt_input = scrolledtext.ScrolledText(parent, height=3)  # Reduced height
         self.prompt_input.pack(fill="both", expand=True)
 
         # Generation controls
@@ -434,9 +823,9 @@ class EntropixTGUI:
         ttk.Button(btn_frame, text="Clear", command=self.clear_output).pack(side="left", padx=5)
 
     def create_output_areas(self, parent):
-        """Create output and statistics areas"""
-        # Main output text area
-        self.output_text = scrolledtext.ScrolledText(parent, height=20)
+        """Create output and statistics areas with increased height"""
+        # Main output text area with increased height
+        self.output_text = scrolledtext.ScrolledText(parent, height=35)  # Increased height
         self.output_text.pack(fill="both", expand=True)
         
         # Statistics area
@@ -504,7 +893,7 @@ class EntropixTGUI:
             self.update_model_list()
 
     def load_selected_model(self):
-        """Load the selected model"""
+        """Load the selected model and its associated configuration"""
         selected = self.model_var.get()
         if not selected:
             self.output_text.insert("end", "Please select a model first.\n")
@@ -530,6 +919,11 @@ class EntropixTGUI:
                 local_files_only=True
             )
             self.tokenizer.pad_token = self.tokenizer.eos_token
+            
+            # Set current model information
+            self.current_model_name = model_info['name']
+            self.current_model_hash = self.get_model_hash(model_info['path'])
+            
             self.sampler_config = SamplerConfig(self.tokenizer)
             
             # Update model info display
@@ -539,11 +933,121 @@ class EntropixTGUI:
             )
             
             self.output_text.insert("end", "Model loaded successfully!\n")
-            self.load_config()  # Load saved parameters if available
+            
+            # Load model-specific configuration
+            self.load_model_config()
             
         except Exception as e:
             self.output_text.insert("end", f"Error loading model: {str(e)}\n")
             logger.error(f"Error loading model: {str(e)}")
+
+    def get_model_hash(self, model_path: str) -> str:
+        """Generate a unique hash for the model based on its path"""
+        return hashlib.md5(str(model_path).encode()).hexdigest()[:8]
+
+    def get_model_config_path(self) -> Path:
+        """Get the configuration file path for the current model"""
+        if not self.current_model_hash:
+            return None
+        return self.config_dir / f"config_{self.current_model_hash}.json"
+    
+    def save_model_config(self):
+        """Save configuration for the current model"""
+        if not self.current_model_hash:
+            return
+            
+        config = {
+            "model_name": self.current_model_name,
+            "model_hash": self.current_model_hash,
+            "last_updated": datetime.now().isoformat(),
+            "parameters": {
+                "basic_sampling": {
+                    "temp": self.temp_var.get(),
+                    "top_p": self.top_p_var.get(),
+                    "top_k": self.top_k_var.get(),
+                    "min_p": self.min_p_var.get(),
+                    "repetition_penalty": self.repetition_penalty_var.get()
+                },
+                "entropy_thresholds": {
+                    "low_ent_thresh": self.low_ent_thresh_var.get(),
+                    "med_ent_thresh": self.med_ent_thresh_var.get(),
+                    "high_ent_thresh": self.high_ent_thresh_var.get(),
+                    "high_vent_thresh": self.high_vent_thresh_var.get(),
+                    "varentropy_threshold": self.varentropy_threshold_var.get()
+                },
+                "adaptive_sampling": {
+                    "ada_temp_logits": self.ada_temp_logits_var.get(),
+                    "ada_temp_attn": self.ada_temp_attn_var.get(),
+                    "ada_temp_agree": self.ada_temp_agree_var.get(),
+                    "n_adaptive_samples": self.n_adaptive_samples_var.get()
+                },
+                "rope_parameters": {
+                    "rope_theta": self.rope_theta_var.get(),
+                    "rope_scaling": self.rope_scaling_var.get(),
+                    "rope_scale_base": self.rope_scale_base_var.get(),
+                    "rope_scale_factor": self.rope_scale_factor_var.get()
+                },
+                "attention_coefficients": {
+                    "helv_attn_ent_offset": self.helv_attn_ent_offset_var.get(),
+                    "helv_attn_ent_coef": self.helv_attn_ent_coef_var.get(),
+                    "lehv_interaction_strength_offset": self.lehv_interaction_strength_offset_var.get(),
+                    "lehv_interaction_strength_coef": self.lehv_interaction_strength_coef_var.get(),
+                    "hehv_attn_ent_coef": self.hehv_attn_ent_coef_var.get(),
+                    "hehv_attn_vent_offset": self.hehv_attn_vent_offset_var.get(),
+                    "hehv_attn_vent_coef": self.hehv_attn_vent_coef_var.get()
+                },
+                "memory_context": {
+                    "max_ngram_size": self.max_ngram_size_var.get(),
+                    "max_ngram_repeat": self.max_ngram_repeat_var.get(),
+                    "window_size": self.window_size_var.get(),
+                    "long_window_size": self.long_window_size_var.get(),
+                    "decay_factor": self.decay_factor_var.get(),
+                    "long_decay_factor": self.long_decay_factor_var.get()
+                }
+            }
+        }
+        
+        try:
+            config_path = self.get_model_config_path()
+            with open(config_path, "w") as f:
+                json.dump(config, f, indent=4)
+            logger.info(f"Configuration saved for model {self.current_model_name}")
+        except Exception as e:
+            logger.error(f"Error saving configuration: {str(e)}")
+
+    def load_model_config(self):
+        """Load configuration for the current model"""
+        try:
+            config_path = self.get_model_config_path()
+            if not config_path or not config_path.exists():
+                logger.info(f"No saved configuration found for model {self.current_model_name}")
+                return
+                
+            with open(config_path, "r") as f:
+                config = json.load(f)
+            
+            # Update all GUI variables from loaded config
+            params = config.get("parameters", {})
+            for section, section_params in params.items():
+                for param, value in section_params.items():
+                    var = getattr(self, f"{param}_var", None)
+                    if var:
+                        var.set(value)
+            
+            logger.info(f"Configuration loaded for model {self.current_model_name}")
+            self.update_config()
+        except Exception as e:
+            logger.error(f"Error loading configuration: {str(e)}")
+
+    def update_config(self):
+        """Update sampler config from GUI values and save"""
+        if self.sampler_config:
+            # Update sampler config with current GUI values
+            # ... (existing update code) ...
+            
+            # Automatically save the configuration
+            self.save_model_config()
+
 
     def update_config(self):
         """Update sampler config from GUI values"""
@@ -971,8 +1475,9 @@ class EntropixTGUI:
             self.strategy_var.set(strategy_text)
 
     def generate_text(self, prompt: str):
-        """Generate text using the enhanced sampling strategy with monitoring"""
+        """Generate text with proper newline handling and automatic output saving"""
         try:
+            # Encode input with proper truncation
             input_ids = self.tokenizer.encode(
                 prompt,
                 return_tensors="pt",
@@ -982,9 +1487,12 @@ class EntropixTGUI:
             
             attention_mask = torch.ones_like(input_ids)
             
-            self.response_queue.put(("token", f"Prompt: {prompt}\n\nGenerated response:\n"))
+            # Add proper newlines in the prompt display
+            formatted_prompt = prompt.replace('\\n', '\n')
+            self.response_queue.put(("token", f"Prompt: {formatted_prompt}\n\nGenerated response:\n"))
             
             sampler = EntropixSampler(self.sampler_config)
+            generated_text = []  # Store generated tokens for output saving
             
             with torch.inference_mode():
                 for _ in range(1000):  # Max tokens
@@ -1010,14 +1518,20 @@ class EntropixTGUI:
                     
                     if state == SamplerState.EOT or sampled_token[0] == self.tokenizer.eos_token_id:
                         self.response_queue.put(("token", "\n[End of Text]\n"))
+                        generated_text.append("[End of Text]")
                         break
                     
                     if state == SamplerState.INSERT_COT and sampled_token[0] == self.sampler_config.cot_token:
                         next_token_text = "[...]"
                         self.response_queue.put(("token", f"\n{next_token_text}\n"))
+                        generated_text.append(next_token_text)
                     else:
+                        # Decode token and handle special characters
                         next_token_text = self.tokenizer.decode(sampled_token[0])
+                        # Replace literal \n with actual newlines
+                        next_token_text = next_token_text.replace('\\n', '\n')
                         self.response_queue.put(("token", next_token_text))
+                        generated_text.append(next_token_text)
                     
                     input_ids = torch.cat([input_ids, sampled_token], dim=-1)
                     attention_mask = torch.cat([
@@ -1027,15 +1541,129 @@ class EntropixTGUI:
                     
                     if input_ids.shape[1] >= self.model.config.max_position_embeddings:
                         self.response_queue.put(("token", "\n[Reached maximum sequence length]\n"))
+                        generated_text.append("[Reached maximum sequence length]")
                         break
                     
                     if _ % 5 == 0:  # Update stats periodically
                         stats = sampler.calculate_metrics(logits, attention)
                         self.response_queue.put(("stats", stats))
-                        
+                
+                # Automatically save the output after generation
+                self.save_generation_output(prompt, "".join(generated_text), sampler.get_final_stats())
+                
         except Exception as e:
             self.response_queue.put(("error", str(e)))
             logger.error(f"Generation error: {str(e)}")
+
+
+    def get_current_config(self):
+        """Get current configuration as a dictionary with all parameters"""
+        return {
+            "model_info": {
+                "name": self.current_model_name,
+                "hash": self.current_model_hash,
+                "timestamp": datetime.now().isoformat()
+            },
+            "parameters": {
+                "basic_sampling": {
+                    "temp": self.temp_var.get(),
+                    "top_p": self.top_p_var.get(),
+                    "top_k": self.top_k_var.get(),
+                    "min_p": self.min_p_var.get(),
+                    "repetition_penalty": self.repetition_penalty_var.get()
+                },
+                "entropy_thresholds": {
+                    "low_ent_thresh": self.low_ent_thresh_var.get(),
+                    "med_ent_thresh": self.med_ent_thresh_var.get(),
+                    "high_ent_thresh": self.high_ent_thresh_var.get(),
+                    "high_vent_thresh": self.high_vent_thresh_var.get(),
+                    "varentropy_threshold": self.varentropy_threshold_var.get()
+                },
+                "adaptive_sampling": {
+                    "ada_temp_logits": self.ada_temp_logits_var.get(),
+                    "ada_temp_attn": self.ada_temp_attn_var.get(),
+                    "ada_temp_agree": self.ada_temp_agree_var.get(),
+                    "n_adaptive_samples": self.n_adaptive_samples_var.get()
+                },
+                "rope_parameters": {
+                    "rope_theta": self.rope_theta_var.get(),
+                    "rope_scaling": self.rope_scaling_var.get(),
+                    "rope_scale_base": self.rope_scale_base_var.get(),
+                    "rope_scale_factor": self.rope_scale_factor_var.get()
+                },
+                "attention_coefficients": {
+                    "helv_attn_ent_offset": self.helv_attn_ent_offset_var.get(),
+                    "helv_attn_ent_coef": self.helv_attn_ent_coef_var.get(),
+                    "lehv_interaction_strength_offset": self.lehv_interaction_strength_offset_var.get(),
+                    "lehv_interaction_strength_coef": self.lehv_interaction_strength_coef_var.get(),
+                    "hehv_attn_ent_coef": self.hehv_attn_ent_coef_var.get(),
+                    "hehv_attn_vent_offset": self.hehv_attn_vent_offset_var.get(),
+                    "hehv_attn_vent_coef": self.hehv_attn_vent_coef_var.get()
+                },
+                "memory_context": {
+                    "max_ngram_size": self.max_ngram_size_var.get(),
+                    "max_ngram_repeat": self.max_ngram_repeat_var.get(),
+                    "window_size": self.window_size_var.get(),
+                    "long_window_size": self.long_window_size_var.get(),
+                    "decay_factor": self.decay_factor_var.get(),
+                    "long_decay_factor": self.long_decay_factor_var.get()
+                }
+            },
+            "generation_settings": {
+                "max_tokens": 1000,
+                "device": str(device),
+                "model_max_length": self.model.config.max_position_embeddings if self.model else None,
+                "truncation_length": self.model.config.max_position_embeddings - 1000 if self.model else None
+            }
+        }
+
+    def save_generation_output(self, prompt: str, generated_text: str, final_stats: dict):
+        """Save the generation output automatically with all context"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        try:
+            # Prepare output content
+            content = [
+                "=== Generation Information ===",
+                f"Timestamp: {datetime.now().isoformat()}",
+                f"Model: {self.current_model_name}",
+                f"Model Hash: {self.current_model_hash}",
+                "",
+                "=== Prompt ===",
+                prompt,
+                "",
+                "=== Generated Output ===",
+                generated_text,
+                "",
+                "=== Generation Statistics ===",
+                f"Total Tokens: {sum(self.strategy_counter.values())}",
+                "Strategy Usage:",
+            ]
+            
+            # Add strategy statistics
+            total_tokens = sum(self.strategy_counter.values())
+            if total_tokens > 0:
+                for strategy, count in self.strategy_counter.most_common():
+                    percentage = (count / total_tokens) * 100
+                    content.append(f"  {strategy}: {count} ({percentage:.1f}%)")
+            
+            # Add final statistics
+            content.extend([
+                "",
+                "=== Final Statistics ===",
+                json.dumps(final_stats, indent=2),
+                "",
+                "=== Configuration Used ===",
+                json.dumps(self.get_current_config(), indent=2)
+            ])
+            
+            # Save the file
+            output_path = self.output_dir / f"{self.current_model_hash}_{timestamp}.txt"
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(content))
+            
+            logger.info(f"Output saved to {output_path}")
+        except Exception as e:
+            logger.error(f"Error saving output: {str(e)}")
 
 def main():
     """Main function to run the Entropix GUI"""
