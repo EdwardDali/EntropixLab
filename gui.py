@@ -25,6 +25,88 @@ from main_t import (
     EntropixSampler
 )
 
+class ToolTip:
+    """Tooltip widget implementation"""
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tooltip = None
+        self.widget.bind("<Enter>", self.show)
+        self.widget.bind("<Leave>", self.hide)
+
+    def show(self, event=None):
+        x, y, _, _ = self.widget.bbox("insert")
+        x += self.widget.winfo_rootx() + 25
+        y += self.widget.winfo_rooty() + 20
+
+        self.tooltip = tk.Toplevel(self.widget)
+        self.tooltip.wm_overrideredirect(True)
+        self.tooltip.wm_geometry(f"+{x}+{y}")
+        
+        label = ttk.Label(
+            self.tooltip,
+            text=self.text,
+            justify='left',
+            background="#ffffe0",
+            relief='solid',
+            borderwidth=1,
+            wraplength=300
+        )
+        label.pack()
+
+    def hide(self, event=None):
+        if self.tooltip:
+            self.tooltip.destroy()
+            self.tooltip = None
+
+# Parameter tooltips
+PARAMETER_TOOLTIPS = {
+    "basic_sampling": {
+        "temp": "Temperature for logits. Higher values increase randomness.",
+        "top_p": "Nucleus sampling threshold. Cumulative probability cutoff.",
+        "top_k": "Top-k sampling. Number of highest probability tokens to consider.",
+        "min_p": "Minimum probability threshold for token selection.",
+        "repetition_penalty": "Penalty applied to repeated tokens."
+    },
+    "entropy_thresholds": {
+        "low_ent_thresh": "Threshold for low entropy detection. Below this triggers argmax sampling.",
+        "med_ent_thresh": "Medium entropy threshold for switching strategies.",
+        "high_ent_thresh": "High entropy threshold for adaptive sampling.",
+        "high_vent_thresh": "Threshold for high variance entropy detection.",
+        "varentropy_threshold": "Variance of entropy threshold for strategy selection."
+    },
+    "adaptive_sampling": {
+        "ada_temp_logits": "Temperature adjustment based on logits uncertainty.",
+        "ada_temp_attn": "Temperature adjustment based on attention uncertainty.",
+        "ada_temp_agree": "Temperature adjustment based on head agreement.",
+        "n_adaptive_samples": "Number of samples to generate in adaptive mode."
+    },
+    "attention_coefficients": {
+        "helv_attn_ent_offset": "High Entropy Low Variance attention entropy offset.",
+        "helv_attn_ent_coef": "High Entropy Low Variance attention entropy coefficient.",
+        "lehv_interaction_strength_offset": "Low Entropy High Variance interaction strength offset.",
+        "lehv_interaction_strength_coef": "Low Entropy High Variance interaction strength coefficient.",
+        "hehv_attn_ent_coef": "High Entropy High Variance attention entropy coefficient.",
+        "hehv_attn_vent_offset": "High Entropy High Variance attention variance offset.",
+        "hehv_attn_vent_coef": "High Entropy High Variance attention variance coefficient."
+    },
+    "rope_parameters": {
+        "rope_theta": "Base value for RoPE (Rotary Position Embedding).",
+        "rope_scaling": "Scaling factor for RoPE computations.",
+        "rope_scale_base": "Base value for RoPE scaling.",
+        "rope_scale_factor": "Factor for RoPE scaling calculations."
+    },
+    "memory_context": {
+        "max_ngram_size": "Maximum size of n-grams to track for repetition.",
+        "max_ngram_repeat": "Maximum allowed repetitions of any n-gram.",
+        "window_size": "Size of the rolling window for statistics.",
+        "long_window_size": "Size of the long-term rolling window.",
+        "decay_factor": "Decay rate for rolling statistics.",
+        "long_decay_factor": "Decay rate for long-term statistics."
+    }
+}
+
+
 class ModelDiscovery:
     def __init__(self):
         # Get default HF cache directory
@@ -184,27 +266,11 @@ class EntropixTGUI:
         self.strategy_counter = Counter()
         self.stats_lock = Lock()
         
+        # Initialize all parameter variables before GUI setup
+        self.initialize_parameter_vars()
+        
         self.setup_gui()
         self.create_model_selector()
-
-    def create_slider(self, parent, label: str, variable: tk.Variable, min_val: float, max_val: float, integer: bool = False):
-        """Create a labeled slider with entry box"""
-        frame = ttk.Frame(parent)
-        frame.pack(fill="x", padx=5, pady=2)
-        
-        ttk.Label(frame, text=label).pack(side="left")
-        
-        slider = ttk.Scale(
-            frame,
-            from_=min_val,
-            to=max_val,
-            variable=variable,
-            orient="horizontal"
-        )
-        slider.pack(side="left", fill="x", expand=True, padx=5)
-        
-        entry = ttk.Entry(frame, width=8, textvariable=variable)
-        entry.pack(side="left")
 
     def setup_gui(self):
         # Create main frames
@@ -223,6 +289,87 @@ class EntropixTGUI:
         self.create_parameter_controls(control_frame)
         self.create_input_area(input_frame)
         self.create_output_areas(output_frame)
+
+    def initialize_parameter_vars(self):
+        """Initialize all parameter variables with defaults from main_t"""
+        # Basic sampling parameters
+        self.temp_var = tk.DoubleVar(value=0.666)
+        self.top_p_var = tk.DoubleVar(value=0.90)
+        self.top_k_var = tk.IntVar(value=27)
+        self.min_p_var = tk.DoubleVar(value=0.05)
+        self.repetition_penalty_var = tk.DoubleVar(value=1.2)
+
+        # Entropy thresholds
+        self.low_ent_thresh_var = tk.DoubleVar(value=0.1)
+        self.med_ent_thresh_var = tk.DoubleVar(value=1.8)
+        self.high_ent_thresh_var = tk.DoubleVar(value=2.5)
+        self.high_vent_thresh_var = tk.DoubleVar(value=3.0)
+        self.varentropy_threshold_var = tk.DoubleVar(value=0.1)
+
+        # Adaptive sampling coefficients
+        self.ada_temp_logits_var = tk.DoubleVar(value=0.2)
+        self.ada_temp_attn_var = tk.DoubleVar(value=0.3)
+        self.ada_temp_agree_var = tk.DoubleVar(value=0.1)
+        self.n_adaptive_samples_var = tk.IntVar(value=3)
+
+        # RoPE parameters
+        self.rope_theta_var = tk.DoubleVar(value=10000.0)
+        self.rope_scaling_var = tk.DoubleVar(value=1.0)
+        self.rope_scale_base_var = tk.DoubleVar(value=8.0)
+        self.rope_scale_factor_var = tk.DoubleVar(value=0.25)
+
+        # Attention coefficients
+        self.helv_attn_ent_offset_var = tk.DoubleVar(value=1.3)
+        self.helv_attn_ent_coef_var = tk.DoubleVar(value=0.2)
+        self.lehv_interaction_strength_offset_var = tk.DoubleVar(value=1.2)
+        self.lehv_interaction_strength_coef_var = tk.DoubleVar(value=0.3)
+        self.hehv_attn_ent_coef_var = tk.DoubleVar(value=0.2)
+        self.hehv_attn_vent_offset_var = tk.DoubleVar(value=2.0)
+        self.hehv_attn_vent_coef_var = tk.DoubleVar(value=0.5)
+
+        # Memory and window parameters
+        self.max_ngram_size_var = tk.IntVar(value=5)
+        self.max_ngram_repeat_var = tk.IntVar(value=3)
+        self.window_size_var = tk.IntVar(value=50)
+        self.long_window_size_var = tk.IntVar(value=500)
+        self.decay_factor_var = tk.DoubleVar(value=0.95)
+        self.long_decay_factor_var = tk.DoubleVar(value=0.95)
+
+    def create_parameter_controls(self, parent):
+        """Create organized parameter controls"""
+        # Create notebook for tabbed organization
+        notebook = ttk.Notebook(parent)
+        notebook.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # Basic Sampling tab
+        basic_frame = ttk.Frame(notebook)
+        notebook.add(basic_frame, text="Basic Sampling")
+        self.create_basic_controls(basic_frame)
+
+        # Entropy & Strategy tab
+        entropy_frame = ttk.Frame(notebook)
+        notebook.add(entropy_frame, text="Entropy & Strategy")
+        self.create_entropy_controls(entropy_frame)
+
+        # Adaptive Sampling tab
+        adaptive_frame = ttk.Frame(notebook)
+        notebook.add(adaptive_frame, text="Adaptive Sampling")
+        self.create_adaptive_controls(adaptive_frame)
+
+        # Attention Coefficients tab
+        attention_frame = ttk.Frame(notebook)
+        notebook.add(attention_frame, text="Attention")
+        self.create_attention_controls(attention_frame)
+
+        # RoPE & Position tab
+        rope_frame = ttk.Frame(notebook)
+        notebook.add(rope_frame, text="RoPE & Position")
+        self.create_rope_controls(rope_frame)
+
+        # Memory & Context tab
+        memory_frame = ttk.Frame(notebook)
+        notebook.add(memory_frame, text="Memory & Context")
+        self.create_memory_controls(memory_frame)
 
     def create_model_selector(self):
         frame = ttk.Frame(self.root.children['!labelframe'])
@@ -327,67 +474,6 @@ class EntropixTGUI:
             self.stat_labels[metric] = var
             ttk.Label(right_stats, textvariable=var).pack(anchor="w")
 
-    def create_parameter_controls(self, parent):
-        """Create all parameter controls"""
-        # Create parameter group frames
-        basic_frame = ttk.LabelFrame(parent, text="Basic Parameters", padding="5")
-        basic_frame.pack(side="left", fill="both", expand=True, padx=5)
-
-        entropy_frame = ttk.LabelFrame(parent, text="Entropy Thresholds", padding="5")
-        entropy_frame.pack(side="left", fill="both", expand=True, padx=5)
-
-        advanced_frame = ttk.LabelFrame(parent, text="Advanced Parameters", padding="5")
-        advanced_frame.pack(side="left", fill="both", expand=True, padx=5)
-
-        # Initialize variables
-        self.initialize_parameter_vars()
-
-        # Create controls for each group
-        self.create_basic_controls(basic_frame)
-        self.create_entropy_controls(entropy_frame)
-        self.create_advanced_controls(advanced_frame)
-
-    def initialize_parameter_vars(self):
-        """Initialize all parameter variables"""
-        # Basic parameters
-        self.temp_var = tk.DoubleVar(value=0.666)
-        self.top_p_var = tk.DoubleVar(value=0.90)
-        self.top_k_var = tk.IntVar(value=27)
-        self.min_p_var = tk.DoubleVar(value=0.05)
-
-        # Entropy thresholds
-        self.low_ent_thresh_var = tk.DoubleVar(value=0.1)
-        self.med_ent_thresh_var = tk.DoubleVar(value=1.8)
-        self.high_ent_thresh_var = tk.DoubleVar(value=2.5)
-        self.varentropy_threshold_var = tk.DoubleVar(value=0.1)
-
-        # Advanced parameters
-        self.repetition_penalty_var = tk.DoubleVar(value=1.2)
-        self.max_ngram_size_var = tk.IntVar(value=5)
-        self.max_ngram_repeat_var = tk.IntVar(value=3)
-
-    def create_basic_controls(self, parent):
-        """Create basic parameter controls"""
-        self.create_slider(parent, "Temperature", self.temp_var, 0.1, 2.0)
-        self.create_slider(parent, "Top P", self.top_p_var, 0.0, 1.0)
-        self.create_slider(parent, "Top K", self.top_k_var, 1, 100, True)
-        self.create_slider(parent, "Min P", self.min_p_var, 0.0, 0.5)
-
-    def create_entropy_controls(self, parent):
-        """Create entropy threshold controls"""
-        self.create_slider(parent, "Low Entropy", self.low_ent_thresh_var, 0.0, 1.0)
-        self.create_slider(parent, "Med Entropy", self.med_ent_thresh_var, 0.0, 3.0)
-        self.create_slider(parent, "High Entropy", self.high_ent_thresh_var, 0.0, 5.0)
-        self.create_slider(parent, "Varentropy", self.varentropy_threshold_var, 0.0, 1.0)
-
-    def create_advanced_controls(self, parent):
-        """Create advanced parameter controls"""
-        self.create_slider(parent, "Rep. Penalty", self.repetition_penalty_var, 1.0, 2.0)
-        self.create_slider(parent, "Max Ngram Size", self.max_ngram_size_var, 1, 10, True)
-        self.create_slider(parent, "Max Repeats", self.max_ngram_repeat_var, 1, 10, True)
-
-    # ... [Previous methods remain the same] ...
-
     def update_model_list(self):
         """Update the model dropdown with available models"""
         model_list = sorted(self.model_discovery.available_models.keys())
@@ -396,7 +482,7 @@ class EntropixTGUI:
         if model_list:
             self.model_var.set(model_list[0])
             
-        ## Update status
+        # Update status
         total_models = len(model_list)
         self.model_info.config(
             text=f"Found {total_models} model{'s' if total_models != 1 else ''}"
@@ -462,22 +548,48 @@ class EntropixTGUI:
     def update_config(self):
         """Update sampler config from GUI values"""
         if self.sampler_config:
-            # Update basic parameters
+            # Basic sampling parameters
             self.sampler_config.temp = self.temp_var.get()
             self.sampler_config.top_p = self.top_p_var.get()
             self.sampler_config.top_k = self.top_k_var.get()
             self.sampler_config.min_p = self.min_p_var.get()
+            self.sampler_config.repetition_penalty = self.repetition_penalty_var.get()
             
-            # Update entropy thresholds
+            # Entropy thresholds
             self.sampler_config.low_ent_thresh = self.low_ent_thresh_var.get()
             self.sampler_config.med_ent_thresh = self.med_ent_thresh_var.get()
             self.sampler_config.high_ent_thresh = self.high_ent_thresh_var.get()
+            self.sampler_config.high_vent_thresh = self.high_vent_thresh_var.get()
             self.sampler_config.varentropy_threshold = self.varentropy_threshold_var.get()
             
-            # Update advanced parameters
-            self.sampler_config.repetition_penalty = self.repetition_penalty_var.get()
+            # Adaptive sampling parameters
+            self.sampler_config.ada_temp_logits = self.ada_temp_logits_var.get()
+            self.sampler_config.ada_temp_attn = self.ada_temp_attn_var.get()
+            self.sampler_config.ada_temp_agree = self.ada_temp_agree_var.get()
+            self.sampler_config.n_adaptive_samples = self.n_adaptive_samples_var.get()
+
+            # RoPE parameters
+            self.sampler_config.rope_theta = self.rope_theta_var.get()
+            self.sampler_config.rope_scaling = self.rope_scaling_var.get()
+            self.sampler_config.rope_scale_base = self.rope_scale_base_var.get()
+            self.sampler_config.rope_scale_factor = self.rope_scale_factor_var.get()
+            
+            # Attention coefficients
+            self.sampler_config.helv_attn_ent_offset = self.helv_attn_ent_offset_var.get()
+            self.sampler_config.helv_attn_ent_coef = self.helv_attn_ent_coef_var.get()
+            self.sampler_config.lehv_interaction_strength_offset = self.lehv_interaction_strength_offset_var.get()
+            self.sampler_config.lehv_interaction_strength_coef = self.lehv_interaction_strength_coef_var.get()
+            self.sampler_config.hehv_attn_ent_coef = self.hehv_attn_ent_coef_var.get()
+            self.sampler_config.hehv_attn_vent_offset = self.hehv_attn_vent_offset_var.get()
+            self.sampler_config.hehv_attn_vent_coef = self.hehv_attn_vent_coef_var.get()
+            
+            # Memory and window parameters
             self.sampler_config.max_ngram_size = self.max_ngram_size_var.get()
             self.sampler_config.max_ngram_repeat = self.max_ngram_repeat_var.get()
+            self.sampler_config.window_size = self.window_size_var.get()
+            self.sampler_config.long_window_size = self.long_window_size_var.get()
+            self.sampler_config.decay_factor = self.decay_factor_var.get()
+            self.sampler_config.long_decay_factor = self.long_decay_factor_var.get()
             
             # Save configuration
             self.save_config()
@@ -485,27 +597,57 @@ class EntropixTGUI:
     def save_config(self):
         """Save current configuration to file"""
         config = {
-            "basic": {
+            "basic_sampling": {
                 "temp": self.temp_var.get(),
                 "top_p": self.top_p_var.get(),
                 "top_k": self.top_k_var.get(),
-                "min_p": self.min_p_var.get()
+                "min_p": self.min_p_var.get(),
+                "repetition_penalty": self.repetition_penalty_var.get()
             },
-            "entropy": {
+            "entropy_thresholds": {
                 "low_ent_thresh": self.low_ent_thresh_var.get(),
                 "med_ent_thresh": self.med_ent_thresh_var.get(),
                 "high_ent_thresh": self.high_ent_thresh_var.get(),
+                "high_vent_thresh": self.high_vent_thresh_var.get(),
                 "varentropy_threshold": self.varentropy_threshold_var.get()
             },
-            "advanced": {
-                "repetition_penalty": self.repetition_penalty_var.get(),
+            "adaptive_sampling": {
+                "ada_temp_logits": self.ada_temp_logits_var.get(),
+                "ada_temp_attn": self.ada_temp_attn_var.get(),
+                "ada_temp_agree": self.ada_temp_agree_var.get(),
+                "n_adaptive_samples": self.n_adaptive_samples_var.get()
+            },
+            "rope_parameters": {
+                "rope_theta": self.rope_theta_var.get(),
+                "rope_scaling": self.rope_scaling_var.get(),
+                "rope_scale_base": self.rope_scale_base_var.get(),
+                "rope_scale_factor": self.rope_scale_factor_var.get()
+            },
+            "attention_coefficients": {
+                "helv_attn_ent_offset": self.helv_attn_ent_offset_var.get(),
+                "helv_attn_ent_coef": self.helv_attn_ent_coef_var.get(),
+                "lehv_interaction_strength_offset": self.lehv_interaction_strength_offset_var.get(),
+                "lehv_interaction_strength_coef": self.lehv_interaction_strength_coef_var.get(),
+                "hehv_attn_ent_coef": self.hehv_attn_ent_coef_var.get(),
+                "hehv_attn_vent_offset": self.hehv_attn_vent_offset_var.get(),
+                "hehv_attn_vent_coef": self.hehv_attn_vent_coef_var.get()
+            },
+            "memory_context": {
                 "max_ngram_size": self.max_ngram_size_var.get(),
-                "max_ngram_repeat": self.max_ngram_repeat_var.get()
+                "max_ngram_repeat": self.max_ngram_repeat_var.get(),
+                "window_size": self.window_size_var.get(),
+                "long_window_size": self.long_window_size_var.get(),
+                "decay_factor": self.decay_factor_var.get(),
+                "long_decay_factor": self.long_decay_factor_var.get()
             }
         }
         
-        with open("entropix_config.json", "w") as f:
-            json.dump(config, f, indent=4)
+        try:
+            with open("entropix_config.json", "w") as f:
+                json.dump(config, f, indent=4)
+            logger.info("Configuration saved successfully")
+        except Exception as e:
+            logger.error(f"Error saving configuration: {str(e)}")
 
     def load_config(self):
         """Load configuration from file"""
@@ -513,16 +655,237 @@ class EntropixTGUI:
             with open("entropix_config.json", "r") as f:
                 config = json.load(f)
                 
-            # Update GUI variables
+            # Update all GUI variables from loaded config
             for section, params in config.items():
                 for param, value in params.items():
                     var = getattr(self, f"{param}_var", None)
                     if var:
                         var.set(value)
                         
+            logger.info("Configuration loaded successfully")
             self.update_config()
         except FileNotFoundError:
-            pass  # Use defaults if no config file exists
+            logger.info("No saved configuration found, using defaults")
+        except Exception as e:
+            logger.error(f"Error loading configuration: {str(e)}")
+
+    def create_basic_controls(self, parent):
+        """Create basic sampling controls"""
+        group = ttk.LabelFrame(parent, text="Basic Sampling Parameters", padding=5)
+        group.pack(fill="x", padx=5, pady=5)
+        
+        self.create_slider_with_tooltip(
+            group, "Temperature", self.temp_var, 0.1, 2.0,
+            PARAMETER_TOOLTIPS["basic_sampling"]["temp"]
+        )
+        self.create_slider_with_tooltip(
+            group, "Top P", self.top_p_var, 0.0, 1.0,
+            PARAMETER_TOOLTIPS["basic_sampling"]["top_p"]
+        )
+        self.create_slider_with_tooltip(
+            group, "Top K", self.top_k_var, 1, 100,
+            PARAMETER_TOOLTIPS["basic_sampling"]["top_k"]
+        )
+        self.create_slider_with_tooltip(
+            group, "Min P", self.min_p_var, 0.0, 0.5,
+            PARAMETER_TOOLTIPS["basic_sampling"]["min_p"]
+        )
+        self.create_slider_with_tooltip(
+            group, "Repetition Penalty", self.repetition_penalty_var, 1.0, 2.0,
+            PARAMETER_TOOLTIPS["basic_sampling"]["repetition_penalty"]
+        )
+
+    def create_slider(self, parent, label: str, variable: tk.Variable, min_val: float, max_val: float, integer: bool = False):
+        """Create a labeled slider with entry box"""
+        frame = ttk.Frame(parent)
+        frame.pack(fill="x", padx=5, pady=2)
+        
+        ttk.Label(frame, text=label).pack(side="left")
+        
+        slider = ttk.Scale(
+            frame,
+            from_=min_val,
+            to=max_val,
+            variable=variable,
+            orient="horizontal"
+        )
+        slider.pack(side="left", fill="x", expand=True, padx=5)
+        
+        entry = ttk.Entry(frame, width=8, textvariable=variable)
+        entry.pack(side="left")
+
+    def create_slider_with_tooltip(self, parent, label: str, variable: tk.Variable, 
+                                min_val: float, max_val: float, tooltip_text: str,
+                                integer: bool = False):
+        """Create a labeled slider with entry box and tooltip"""
+        frame = ttk.Frame(parent)
+        frame.pack(fill="x", padx=5, pady=2)
+        
+        label_widget = ttk.Label(frame, text=label)
+        label_widget.pack(side="left")
+        
+        # Create tooltip
+        ToolTip(label_widget, text=tooltip_text)
+        
+        slider = ttk.Scale(
+            frame,
+            from_=min_val,
+            to=max_val,
+            variable=variable,
+            orient="horizontal"
+        )
+        slider.pack(side="left", fill="x", expand=True, padx=5)
+        
+        entry = ttk.Entry(frame, width=8, textvariable=variable)
+        entry.pack(side="left")
+        
+        return frame
+
+    def create_entropy_controls(self, parent):
+        """Create entropy threshold controls"""
+        thresholds_group = ttk.LabelFrame(parent, text="Entropy Thresholds", padding=5)
+        thresholds_group.pack(fill="x", padx=5, pady=5)
+        
+        self.create_slider_with_tooltip(
+            thresholds_group, "Low Entropy", self.low_ent_thresh_var, 0.0, 1.0,
+            PARAMETER_TOOLTIPS["entropy_thresholds"]["low_ent_thresh"]
+        )
+        self.create_slider_with_tooltip(
+            thresholds_group, "Medium Entropy", self.med_ent_thresh_var, 0.0, 3.0,
+            PARAMETER_TOOLTIPS["entropy_thresholds"]["med_ent_thresh"]
+        )
+        self.create_slider_with_tooltip(
+            thresholds_group, "High Entropy", self.high_ent_thresh_var, 0.0, 5.0,
+            PARAMETER_TOOLTIPS["entropy_thresholds"]["high_ent_thresh"]
+        )
+        self.create_slider_with_tooltip(
+            thresholds_group, "High Varentropy", self.high_vent_thresh_var, 0.0, 5.0,
+            PARAMETER_TOOLTIPS["entropy_thresholds"]["high_vent_thresh"]
+        )
+        self.create_slider_with_tooltip(
+            thresholds_group, "Varentropy Threshold", self.varentropy_threshold_var, 0.0, 1.0,
+            PARAMETER_TOOLTIPS["entropy_thresholds"]["varentropy_threshold"]
+        )
+
+    def create_adaptive_controls(self, parent):
+        """Create adaptive sampling controls"""
+        adaptive_group = ttk.LabelFrame(parent, text="Adaptive Parameters", padding=5)
+        adaptive_group.pack(fill="x", padx=5, pady=5)
+        
+        self.create_slider_with_tooltip(
+            adaptive_group, "Temperature Logits", self.ada_temp_logits_var, 0.0, 1.0,
+            PARAMETER_TOOLTIPS["adaptive_sampling"]["ada_temp_logits"]
+        )
+        self.create_slider_with_tooltip(
+            adaptive_group, "Temperature Attention", self.ada_temp_attn_var, 0.0, 1.0,
+            PARAMETER_TOOLTIPS["adaptive_sampling"]["ada_temp_attn"]
+        )
+        self.create_slider_with_tooltip(
+            adaptive_group, "Temperature Agreement", self.ada_temp_agree_var, 0.0, 1.0,
+            PARAMETER_TOOLTIPS["adaptive_sampling"]["ada_temp_agree"]
+        )
+        self.create_slider_with_tooltip(
+            adaptive_group, "Adaptive Samples", self.n_adaptive_samples_var, 1, 10,
+            PARAMETER_TOOLTIPS["adaptive_sampling"]["n_adaptive_samples"]
+        )
+
+    def create_attention_controls(self, parent):
+        """Create attention coefficient controls"""
+        helv_group = ttk.LabelFrame(parent, text="High Entropy Low Variance", padding=5)
+        helv_group.pack(fill="x", padx=5, pady=5)
+        
+        self.create_slider_with_tooltip(
+            helv_group, "Entropy Offset", self.helv_attn_ent_offset_var, 0.0, 3.0,
+            PARAMETER_TOOLTIPS["attention_coefficients"]["helv_attn_ent_offset"]
+        )
+        self.create_slider_with_tooltip(
+            helv_group, "Entropy Coefficient", self.helv_attn_ent_coef_var, 0.0, 1.0,
+            PARAMETER_TOOLTIPS["attention_coefficients"]["helv_attn_ent_coef"]
+        )
+
+        lehv_group = ttk.LabelFrame(parent, text="Low Entropy High Variance", padding=5)
+        lehv_group.pack(fill="x", padx=5, pady=5)
+        
+        self.create_slider_with_tooltip(
+            lehv_group, "Interaction Offset", self.lehv_interaction_strength_offset_var, 0.0, 3.0,
+            PARAMETER_TOOLTIPS["attention_coefficients"]["lehv_interaction_strength_offset"]
+        )
+        self.create_slider_with_tooltip(
+            lehv_group, "Interaction Coefficient", self.lehv_interaction_strength_coef_var, 0.0, 1.0,
+            PARAMETER_TOOLTIPS["attention_coefficients"]["lehv_interaction_strength_coef"]
+        )
+
+        hehv_group = ttk.LabelFrame(parent, text="High Entropy High Variance", padding=5)
+        hehv_group.pack(fill="x", padx=5, pady=5)
+        
+        self.create_slider_with_tooltip(
+            hehv_group, "Entropy Coefficient", self.hehv_attn_ent_coef_var, 0.0, 1.0,
+            PARAMETER_TOOLTIPS["attention_coefficients"]["hehv_attn_ent_coef"]
+        )
+        self.create_slider_with_tooltip(
+            hehv_group, "Variance Offset", self.hehv_attn_vent_offset_var, 0.0, 5.0,
+            PARAMETER_TOOLTIPS["attention_coefficients"]["hehv_attn_vent_offset"]
+        )
+        self.create_slider_with_tooltip(
+            hehv_group, "Variance Coefficient", self.hehv_attn_vent_coef_var, 0.0, 1.0,
+            PARAMETER_TOOLTIPS["attention_coefficients"]["hehv_attn_vent_coef"]
+        )
+
+    def create_rope_controls(self, parent):
+        """Create RoPE parameter controls"""
+        rope_group = ttk.LabelFrame(parent, text="RoPE Parameters", padding=5)
+        rope_group.pack(fill="x", padx=5, pady=5)
+        
+        self.create_slider_with_tooltip(
+            rope_group, "Theta", self.rope_theta_var, 1000.0, 100000.0,
+            PARAMETER_TOOLTIPS["rope_parameters"]["rope_theta"]
+        )
+        self.create_slider_with_tooltip(
+            rope_group, "Scaling", self.rope_scaling_var, 0.1, 2.0,
+            PARAMETER_TOOLTIPS["rope_parameters"]["rope_scaling"]
+        )
+        self.create_slider_with_tooltip(
+            rope_group, "Scale Base", self.rope_scale_base_var, 1.0, 16.0,
+            PARAMETER_TOOLTIPS["rope_parameters"]["rope_scale_base"]
+        )
+        self.create_slider_with_tooltip(
+            rope_group, "Scale Factor", self.rope_scale_factor_var, 0.0, 1.0,
+            PARAMETER_TOOLTIPS["rope_parameters"]["rope_scale_factor"]
+        )
+
+    def create_memory_controls(self, parent):
+        """Create memory and context controls"""
+        ngram_group = ttk.LabelFrame(parent, text="N-gram Controls", padding=5)
+        ngram_group.pack(fill="x", padx=5, pady=5)
+        
+        self.create_slider_with_tooltip(
+            ngram_group, "Max N-gram Size", self.max_ngram_size_var, 1, 10,
+            PARAMETER_TOOLTIPS["memory_context"]["max_ngram_size"]
+        )
+        self.create_slider_with_tooltip(
+            ngram_group, "Max N-gram Repeats", self.max_ngram_repeat_var, 1, 10,
+            PARAMETER_TOOLTIPS["memory_context"]["max_ngram_repeat"]
+        )
+
+        window_group = ttk.LabelFrame(parent, text="Window Parameters", padding=5)
+        window_group.pack(fill="x", padx=5, pady=5)
+        
+        self.create_slider_with_tooltip(
+            window_group, "Window Size", self.window_size_var, 10, 200,
+            PARAMETER_TOOLTIPS["memory_context"]["window_size"]
+        )
+        self.create_slider_with_tooltip(
+            window_group, "Long Window Size", self.long_window_size_var, 100, 1000,
+            PARAMETER_TOOLTIPS["memory_context"]["long_window_size"]
+        )
+        self.create_slider_with_tooltip(
+            window_group, "Decay Factor", self.decay_factor_var, 0.1, 1.0,
+            PARAMETER_TOOLTIPS["memory_context"]["decay_factor"]
+        )
+        self.create_slider_with_tooltip(
+            window_group, "Long Decay Factor", self.long_decay_factor_var, 0.1, 1.0,
+            PARAMETER_TOOLTIPS["memory_context"]["long_decay_factor"]
+        )
 
     def start_generation(self):
         if self.generation_thread and self.generation_thread.is_alive():
@@ -607,23 +970,8 @@ class EntropixTGUI:
                 strategy_text += f"{strategy}: {count} ({percentage:.1f}%)\n"
             self.strategy_var.set(strategy_text)
 
-    def sample_token(self, logits: torch.Tensor, attention: torch.Tensor) -> Tuple[torch.Tensor, SamplerState]:
-        """Sample token using the configured sampler"""
-        if not hasattr(self, 'sampler'):
-            self.sampler = EntropixSampler(self.sampler_config)
-        return self.sampler.sample(logits, attention)
-
-    def get_generation_stats(self, logits: torch.Tensor, attention: torch.Tensor, current_state: SamplerState) -> Dict[str, Union[float, str]]:
-        """Calculate generation statistics"""
-        if not hasattr(self, 'sampler'):
-            return {}
-            
-        metrics = self.sampler.calculate_metrics(logits, attention)
-        metrics['current_strategy'] = current_state.name
-        return metrics
-
     def generate_text(self, prompt: str):
-        """Generate text using main_t functionality with monitoring"""
+        """Generate text using the enhanced sampling strategy with monitoring"""
         try:
             input_ids = self.tokenizer.encode(
                 prompt,
@@ -635,6 +983,8 @@ class EntropixTGUI:
             attention_mask = torch.ones_like(input_ids)
             
             self.response_queue.put(("token", f"Prompt: {prompt}\n\nGenerated response:\n"))
+            
+            sampler = EntropixSampler(self.sampler_config)
             
             with torch.inference_mode():
                 for _ in range(1000):  # Max tokens
@@ -651,7 +1001,7 @@ class EntropixTGUI:
                     attention = outputs.attentions[-1]  # Last layer's attention
                     
                     try:
-                        sampled_token, state = self.sample_token(logits, attention)
+                        sampled_token, state = sampler.sample(logits, attention)
                     except Exception as e:
                         self.response_queue.put(("error", f"Sampling error: {str(e)}"))
                         break
@@ -663,11 +1013,11 @@ class EntropixTGUI:
                         break
                     
                     if state == SamplerState.INSERT_COT and sampled_token[0] == self.sampler_config.cot_token:
-                        token_text = "[...thinking...]\n"
+                        next_token_text = "[...]"
+                        self.response_queue.put(("token", f"\n{next_token_text}\n"))
                     else:
-                        token_text = self.tokenizer.decode(sampled_token[0])
-                    
-                    self.response_queue.put(("token", token_text))
+                        next_token_text = self.tokenizer.decode(sampled_token[0])
+                        self.response_queue.put(("token", next_token_text))
                     
                     input_ids = torch.cat([input_ids, sampled_token], dim=-1)
                     attention_mask = torch.cat([
@@ -680,7 +1030,7 @@ class EntropixTGUI:
                         break
                     
                     if _ % 5 == 0:  # Update stats periodically
-                        stats = self.get_generation_stats(logits, attention, state)
+                        stats = sampler.calculate_metrics(logits, attention)
                         self.response_queue.put(("stats", stats))
                         
         except Exception as e:
