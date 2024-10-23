@@ -221,6 +221,17 @@ class SamplerConfig:
         self.decay_factor = self._validate_float("decay_factor", 0.95, min_val=0.0, max_val=1.0)
         self.long_decay_factor = self._validate_float("long_decay_factor", 0.95, min_val=0.0, max_val=1.0)
 
+        # Strategy-specific thresholds
+        self.argmax_entropy_thresh = self._validate_float("argmax_entropy_thresh", 0.1, min_val=0.0)
+        self.sample_min_entropy_thresh = self._validate_float("sample_min_entropy_thresh", 0.1, min_val=0.0)
+        self.sample_max_entropy_thresh = self._validate_float("sample_max_entropy_thresh", 1.8, min_val=0.0)
+        self.cot_min_entropy_thresh = self._validate_float("cot_min_entropy_thresh", 1.8, min_val=0.0)
+        self.cot_max_entropy_thresh = self._validate_float("cot_max_entropy_thresh", 2.5, min_val=0.0)
+        self.resample_min_entropy_thresh = self._validate_float("resample_min_entropy_thresh", 0.5, min_val=0.0)
+        self.resample_max_entropy_thresh = self._validate_float("resample_max_entropy_thresh", 2.0, min_val=0.0)
+        self.adaptive_entropy_thresh = self._validate_float("adaptive_entropy_thresh", 2.5, min_val=0.0)
+        self.adaptive_varentropy_thresh = self._validate_float("adaptive_varentropy_thresh", 3.0, min_val=0.0)
+
         # Statistics tracking
         self.stats_window_size = self._validate_int("stats_window_size", 100, min_val=1)
         
@@ -582,7 +593,7 @@ class EntropixSampler:
         return samples[best_sample_idx]
 
     def determine_strategy(self, entropy: float, varentropy: float, attention_entropy: float) -> SamplerState:
-        """Enhanced strategy determination with rolling statistics"""
+        """Enhanced strategy determination with strategy-specific thresholds"""
         recent_tokens = list(self.recent_tokens)[-1:] if self.recent_tokens else []
         if recent_tokens and self.config.stop_tokens and any(token in self.config.stop_tokens for token in recent_tokens):
             return SamplerState.EOT
@@ -590,16 +601,28 @@ class EntropixSampler:
         rolling_entropy = self.attn_stats.avg_entropy if self.attn_stats else entropy
         rolling_varentropy = self.attn_stats.avg_varentropy if self.attn_stats else varentropy
 
-        if rolling_entropy < self.config.low_ent_thresh and rolling_varentropy < self.config.low_vent_thresh:
+        # Check each strategy's conditions in order of priority
+        if rolling_entropy <= self.config.argmax_entropy_thresh:
             return SamplerState.ARGMAX
-        elif rolling_entropy > self.config.med_ent_thresh and rolling_varentropy < self.config.varentropy_threshold:
-            return SamplerState.INSERT_COT
-        elif rolling_entropy < self.config.high_ent_thresh and rolling_varentropy > self.config.high_vent_thresh:
-            return SamplerState.RESAMPLE
-        elif rolling_entropy > self.config.med_ent_thresh and rolling_varentropy > self.config.high_vent_thresh:
-            return SamplerState.ADAPTIVE
-        else:
+            
+        if (self.config.sample_min_entropy_thresh <= rolling_entropy <= self.config.sample_max_entropy_thresh and 
+            rolling_varentropy < self.config.varentropy_threshold):
             return SamplerState.SAMPLE
+            
+        if (self.config.cot_min_entropy_thresh <= rolling_entropy <= self.config.cot_max_entropy_thresh and 
+            rolling_varentropy < self.config.varentropy_threshold):
+            return SamplerState.INSERT_COT
+            
+        if (self.config.resample_min_entropy_thresh <= rolling_entropy <= self.config.resample_max_entropy_thresh and 
+            rolling_varentropy > self.config.high_vent_thresh):
+            return SamplerState.RESAMPLE
+            
+        if (rolling_entropy >= self.config.adaptive_entropy_thresh and 
+            rolling_varentropy >= self.config.adaptive_varentropy_thresh):
+            return SamplerState.ADAPTIVE
+            
+        # Default to SAMPLE if no other conditions are met
+        return SamplerState.SAMPLE
 
     def sample(self, logits: torch.Tensor, attention: torch.Tensor) -> Tuple[torch.Tensor, SamplerState]:
         """Main sampling method"""
