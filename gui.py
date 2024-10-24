@@ -1199,21 +1199,17 @@ class EntropixTGUI:
             self.sampler_config.decay_factor = self.decay_factor_var.get()
             self.sampler_config.long_decay_factor = self.long_decay_factor_var.get()
 
-             # Strategy-specific thresholds
+             # Strategy thresholds
             self.sampler_config.argmax_entropy_thresh = self.argmax_entropy_thresh_var.get()
-            
             self.sampler_config.sample_min_entropy_thresh = self.sample_min_entropy_thresh_var.get()
             self.sampler_config.sample_max_entropy_thresh = self.sample_max_entropy_thresh_var.get()
             self.sampler_config.sample_varentropy_thresh = self.sample_varentropy_thresh_var.get()
-            
             self.sampler_config.cot_min_entropy_thresh = self.cot_min_entropy_thresh_var.get()
             self.sampler_config.cot_max_entropy_thresh = self.cot_max_entropy_thresh_var.get()
             self.sampler_config.cot_varentropy_thresh = self.cot_varentropy_thresh_var.get()
-            
             self.sampler_config.resample_min_entropy_thresh = self.resample_min_entropy_thresh_var.get()
             self.sampler_config.resample_max_entropy_thresh = self.resample_max_entropy_thresh_var.get()
             self.sampler_config.resample_varentropy_thresh = self.resample_varentropy_thresh_var.get()
-            
             self.sampler_config.adaptive_entropy_thresh = self.adaptive_entropy_thresh_var.get()
             self.sampler_config.adaptive_varentropy_thresh = self.adaptive_varentropy_thresh_var.get()
            
@@ -1376,7 +1372,7 @@ class EntropixTGUI:
         return frame
 
     def create_entropy_controls(self, parent):
-        """Create entropy threshold controls aligned with quadrant-based approach"""
+        """Create entropy threshold controls with extended ranges"""
         # Create main container frame
         main_container = ttk.Frame(parent)
         main_container.pack(fill="both", expand=True, padx=5, pady=5)
@@ -1397,11 +1393,11 @@ class EntropixTGUI:
         argmax_group = ttk.LabelFrame(main_container, text="ARGMAX Strategy (Bottom-Left Quadrant)", padding=5)
         argmax_group.pack(fill="x", pady=5)
         self.create_slider_with_tooltip(
-            argmax_group, "Max Entropy", self.argmax_entropy_thresh_var, 0.0, 3.0,
+            argmax_group, "Max Entropy", self.argmax_entropy_thresh_var, 0.0, 6.0,  # Extended from 3.0 to 6.0
             "Maximum entropy for ARGMAX (low entropy, low variance region)"
         )
         self.create_slider_with_tooltip(
-            argmax_group, "Max Varentropy", self.sample_varentropy_thresh_var, 0.0, 3.0,
+            argmax_group, "Max Varentropy", self.sample_varentropy_thresh_var, 0.0, 6.0,  # Extended from 3.0 to 6.0
             "Maximum variance for ARGMAX"
         )
 
@@ -1409,11 +1405,15 @@ class EntropixTGUI:
         cot_group = ttk.LabelFrame(main_container, text="INSERT_COT Strategy (Top-Left Quadrant)", padding=5)
         cot_group.pack(fill="x", pady=5)
         self.create_slider_with_tooltip(
-            cot_group, "Min Entropy", self.cot_min_entropy_thresh_var, 3.0, 8.0,
+            cot_group, "Min Entropy", self.cot_min_entropy_thresh_var, 0.0, 16.0,  # Extended from 8.0 to 16.0
             "Minimum entropy for INSERT_COT (high entropy, low variance region)"
         )
         self.create_slider_with_tooltip(
-            cot_group, "Max Varentropy", self.cot_varentropy_thresh_var, 0.0, 3.0,
+            cot_group, "Max Entropy", self.cot_max_entropy_thresh_var, 0.0, 16.0,  # Extended from 8.0 to 16.0
+            "Maximum entropy for INSERT_COT"
+        )
+        self.create_slider_with_tooltip(
+            cot_group, "Max Varentropy", self.cot_varentropy_thresh_var, 0.0, 6.0,  # Extended from 3.0 to 6.0
             "Maximum variance threshold for INSERT_COT"
         )
 
@@ -1421,11 +1421,15 @@ class EntropixTGUI:
         resample_group = ttk.LabelFrame(main_container, text="RESAMPLE Strategy (Top-Right Quadrant)", padding=5)
         resample_group.pack(fill="x", pady=5)
         self.create_slider_with_tooltip(
-            resample_group, "Min Entropy", self.resample_min_entropy_thresh_var, 3.0, 8.0,
+            resample_group, "Min Entropy", self.resample_min_entropy_thresh_var, 0.0, 16.0,  # Extended from 8.0 to 16.0
             "Minimum entropy for RESAMPLE (high entropy, high variance region)"
         )
         self.create_slider_with_tooltip(
-            resample_group, "Min Varentropy", self.resample_varentropy_thresh_var, 3.0, 10.0,
+            resample_group, "Max Entropy", self.resample_max_entropy_thresh_var, 0.0, 16.0,  # Extended from 8.0 to 16.0
+            "Maximum entropy for RESAMPLE"
+        )
+        self.create_slider_with_tooltip(
+            resample_group, "Min Varentropy", self.resample_varentropy_thresh_var, 0.0, 20.0,  # Extended from 10.0 to 20.0
             "Minimum variance for RESAMPLE"
         )
 
@@ -1433,11 +1437,11 @@ class EntropixTGUI:
         sample_group = ttk.LabelFrame(main_container, text="SAMPLE Strategy (Bottom-Right Quadrant)", padding=5)
         sample_group.pack(fill="x", pady=5)
         self.create_slider_with_tooltip(
-            sample_group, "Max Entropy", self.sample_min_entropy_thresh_var, 0.0, 3.0,
+            sample_group, "Max Entropy", self.sample_min_entropy_thresh_var, 0.0, 6.0,  # Extended from 3.0 to 6.0
             "Maximum entropy for SAMPLE (low entropy, high variance region)"
         )
         self.create_slider_with_tooltip(
-            sample_group, "Min Varentropy", self.sample_max_entropy_thresh_var, 3.0, 10.0,
+            sample_group, "Min Varentropy", self.sample_max_entropy_thresh_var, 0.0, 20.0,  # Extended from 10.0 to 20.0
             "Minimum variance for SAMPLE"
         )
 
@@ -1445,14 +1449,26 @@ class EntropixTGUI:
         adaptive_group = ttk.LabelFrame(main_container, text="ADAPTIVE Strategy (Center Region)", padding=5)
         adaptive_group.pack(fill="x", pady=5)
         self.create_slider_with_tooltip(
-            adaptive_group, "Center Radius", self.adaptive_entropy_thresh_var, 0.5, 3.0,
+            adaptive_group, "Center Radius", self.adaptive_entropy_thresh_var, 0.0, 6.0,  # Extended from 3.0 to 6.0
             "Radius around center point for ADAPTIVE strategy"
         )
-        # Optional: Add entropy and variance offset sliders for fine-tuning the center point
         self.create_slider_with_tooltip(
-            adaptive_group, "Center Entropy Offset", self.adaptive_varentropy_thresh_var, -2.0, 2.0,
+            adaptive_group, "Entropy Offset", self.adaptive_varentropy_thresh_var, -4.0, 4.0,  # Extended from -2.0/2.0 to -4.0/4.0
             "Offset from median entropy for center point"
         )
+
+        # Add validation for interdependent thresholds
+        def validate_thresholds(*args):
+            if self.cot_min_entropy_thresh_var.get() > self.cot_max_entropy_thresh_var.get():
+                self.cot_max_entropy_thresh_var.set(self.cot_min_entropy_thresh_var.get())
+            if self.resample_min_entropy_thresh_var.get() > self.resample_max_entropy_thresh_var.get():
+                self.resample_max_entropy_thresh_var.set(self.resample_min_entropy_thresh_var.get())
+
+        # Add trace to variables that need validation
+        self.cot_min_entropy_thresh_var.trace_add("write", validate_thresholds)
+        self.cot_max_entropy_thresh_var.trace_add("write", validate_thresholds)
+        self.resample_min_entropy_thresh_var.trace_add("write", validate_thresholds)
+        self.resample_max_entropy_thresh_var.trace_add("write", validate_thresholds)
             
     def create_adaptive_controls(self, parent):
         """Create adaptive sampling controls"""

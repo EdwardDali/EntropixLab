@@ -607,59 +607,53 @@ class EntropixSampler:
             return self._sample(logits, self.config.temp)
 
     def determine_strategy(self, entropy: float, varentropy: float, attention_entropy: float) -> SamplerState:
-        """Enhanced strategy determination using quadrant-based approach"""
+        """Enhanced strategy determination using configurable thresholds"""
         recent_tokens = list(self.recent_tokens)[-1:] if self.recent_tokens else []
         if recent_tokens and self.config.stop_tokens and any(token in self.config.stop_tokens for token in recent_tokens):
             return SamplerState.EOT
 
-        # Define quadrant thresholds
-        MED_ENTROPY_THRESHOLD = 3.0  # Midpoint for entropy
-        MED_VARENTROPY_THRESHOLD = 3.0  # Midpoint for varentropy
-
-        # Debug logging
+        # Log current values and thresholds for debugging
         logger.debug(f"\nCurrent Values:")
         logger.debug(f"Entropy: {entropy:.4f}")
         logger.debug(f"Varentropy: {varentropy:.4f}")
         logger.debug(f"Attention Entropy: {attention_entropy:.4f}")
 
-        # Calculate distance from center point
-        center_distance = math.sqrt(
-            (entropy - MED_ENTROPY_THRESHOLD) ** 2 + 
-            (varentropy - MED_VARENTROPY_THRESHOLD) ** 2
-        )
+        # Check for ARGMAX strategy (low entropy, low variance)
+        if entropy < self.config.argmax_entropy_thresh and varentropy < self.config.sample_varentropy_thresh:
+            logger.debug("ARGMAX triggered (low entropy, low variance)")
+            return SamplerState.ARGMAX
 
-        # If we're near the center point, use ADAPTIVE
-        if center_distance < 1.5:  # Adjustable radius for ADAPTIVE zone
+        # Check for INSERT_COT strategy (high entropy, low variance)
+        if (self.config.cot_min_entropy_thresh <= entropy <= self.config.cot_max_entropy_thresh and 
+            varentropy < self.config.cot_varentropy_thresh):
+            logger.debug("INSERT_COT triggered (high entropy, low variance)")
+            return SamplerState.INSERT_COT
+
+        # Check for RESAMPLE strategy (high entropy, high variance)
+        if (entropy >= self.config.resample_min_entropy_thresh and 
+            varentropy >= self.config.resample_varentropy_thresh):
+            logger.debug("RESAMPLE triggered (high entropy, high variance)")
+            return SamplerState.RESAMPLE
+
+        # Check for SAMPLE strategy (low entropy, high variance)
+        if (entropy <= self.config.sample_max_entropy_thresh and 
+            varentropy >= self.config.sample_varentropy_thresh):
+            logger.debug("SAMPLE triggered (low entropy, high variance)")
+            return SamplerState.SAMPLE
+
+        # Check for ADAPTIVE strategy (near center point)
+        center_distance = math.sqrt(
+            (entropy - self.config.adaptive_entropy_thresh) ** 2 + 
+            (varentropy - self.config.adaptive_varentropy_thresh) ** 2
+        )
+        
+        if center_distance < 1.5:  # Using adaptive radius for center zone
             logger.debug("ADAPTIVE triggered (central position)")
             return SamplerState.ADAPTIVE
 
-        # Determine quadrant and strategy
-        if entropy < MED_ENTROPY_THRESHOLD:
-            if varentropy < MED_VARENTROPY_THRESHOLD:
-                # Bottom-left quadrant: ARGMAX
-                # For very low entropy and low variance
-                logger.debug("ARGMAX triggered (low entropy, low varentropy)")
-                return SamplerState.ARGMAX
-            else:
-                # Bottom-right quadrant: SAMPLE (Branch)
-                # For low entropy but high variance
-                logger.debug("SAMPLE triggered (low entropy, high varentropy)")
-                return SamplerState.SAMPLE
-        else:
-            if varentropy < MED_VARENTROPY_THRESHOLD:
-                # Top-left quadrant: INSERT_COT
-                # For high entropy but low variance
-                logger.debug("INSERT_COT triggered (high entropy, low varentropy)")
-                return SamplerState.INSERT_COT
-            else:
-                # Top-right quadrant: RESAMPLE
-                # For high entropy and high variance
-                logger.debug("RESAMPLE triggered (high entropy, high varentropy)")
-                return SamplerState.RESAMPLE
-
-        # Fallback to ADAPTIVE if something unexpected happens
-        logger.debug("ADAPTIVE triggered (fallback)")
-        return SamplerState.ADAPTIVE
+        # Default to SAMPLE if no other strategy matches
+        logger.debug("SAMPLE triggered (default)")
+        return SamplerState.SAMPLE
     
     def sample(self, logits: torch.Tensor, attention: torch.Tensor) -> Tuple[torch.Tensor, SamplerState]:
         """Main sampling method"""
