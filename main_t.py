@@ -607,55 +607,59 @@ class EntropixSampler:
             return self._sample(logits, self.config.temp)
 
     def determine_strategy(self, entropy: float, varentropy: float, attention_entropy: float) -> SamplerState:
-        """Enhanced strategy determination using correct entropy metrics"""
+        """Enhanced strategy determination using quadrant-based approach"""
         recent_tokens = list(self.recent_tokens)[-1:] if self.recent_tokens else []
         if recent_tokens and self.config.stop_tokens and any(token in self.config.stop_tokens for token in recent_tokens):
             return SamplerState.EOT
 
-        # Use logits entropy and varentropy directly instead of rolling attention-based metrics
-        current_entropy = entropy  # Direct logits entropy
-        current_varentropy = varentropy  # Direct logits varentropy
+        # Define quadrant thresholds
+        MED_ENTROPY_THRESHOLD = 3.0  # Midpoint for entropy
+        MED_VARENTROPY_THRESHOLD = 3.0  # Midpoint for varentropy
 
         # Debug logging
         logger.debug(f"\nCurrent Values:")
-        logger.debug(f"Logits Entropy: {current_entropy:.4f}")
-        logger.debug(f"Logits Varentropy: {current_varentropy:.4f}")
+        logger.debug(f"Entropy: {entropy:.4f}")
+        logger.debug(f"Varentropy: {varentropy:.4f}")
         logger.debug(f"Attention Entropy: {attention_entropy:.4f}")
 
-        # Check conditions in order of priority, using logits-based metrics
-        
-        # 1. First check for extreme varentropy values that should trigger RESAMPLE
-        # Adjust threshold for the scale of logits varentropy
-        if current_varentropy > 5.0:  # Adjusted from config.resample_varentropy_thresh
-            logger.debug(f"RESAMPLE triggered by high varentropy: {current_varentropy:.4f}")
-            return SamplerState.RESAMPLE
-        
-        # 2. Check for very low entropy that should trigger ARGMAX
-        if current_entropy <= self.config.argmax_entropy_thresh:
-            logger.debug(f"ARGMAX triggered by low entropy: {current_entropy:.4f}")
-            return SamplerState.ARGMAX
-        
-        # 3. Check for chain of thought conditions
-        # Adjust thresholds for logits entropy scale
-        if (2.0 <= current_entropy <= 4.0 and current_varentropy < 5.0):
-            logger.debug("INSERT_COT triggered by moderate entropy and controlled varentropy")
-            return SamplerState.INSERT_COT
-        
-        # 4. Check for basic sampling conditions
-        # Adjust thresholds for logits entropy scale
-        if (1.0 <= current_entropy <= 3.0 and current_varentropy < 3.0):
-            logger.debug("SAMPLE triggered by appropriate entropy and low varentropy")
-            return SamplerState.SAMPLE
-        
-        # 5. Finally, check for adaptive conditions
-        # These high entropy/varentropy conditions are likely being met
-        if (current_entropy >= 4.0 or current_varentropy >= 10.0):
-            logger.debug("ADAPTIVE triggered by very high entropy or varentropy")
+        # Calculate distance from center point
+        center_distance = math.sqrt(
+            (entropy - MED_ENTROPY_THRESHOLD) ** 2 + 
+            (varentropy - MED_VARENTROPY_THRESHOLD) ** 2
+        )
+
+        # If we're near the center point, use ADAPTIVE
+        if center_distance < 1.5:  # Adjustable radius for ADAPTIVE zone
+            logger.debug("ADAPTIVE triggered (central position)")
             return SamplerState.ADAPTIVE
-        
-        # Default to SAMPLE if no other conditions are met
-        logger.debug("Defaulting to SAMPLE as no other conditions met")
-        return SamplerState.SAMPLE
+
+        # Determine quadrant and strategy
+        if entropy < MED_ENTROPY_THRESHOLD:
+            if varentropy < MED_VARENTROPY_THRESHOLD:
+                # Bottom-left quadrant: ARGMAX
+                # For very low entropy and low variance
+                logger.debug("ARGMAX triggered (low entropy, low varentropy)")
+                return SamplerState.ARGMAX
+            else:
+                # Bottom-right quadrant: SAMPLE (Branch)
+                # For low entropy but high variance
+                logger.debug("SAMPLE triggered (low entropy, high varentropy)")
+                return SamplerState.SAMPLE
+        else:
+            if varentropy < MED_VARENTROPY_THRESHOLD:
+                # Top-left quadrant: INSERT_COT
+                # For high entropy but low variance
+                logger.debug("INSERT_COT triggered (high entropy, low varentropy)")
+                return SamplerState.INSERT_COT
+            else:
+                # Top-right quadrant: RESAMPLE
+                # For high entropy and high variance
+                logger.debug("RESAMPLE triggered (high entropy, high varentropy)")
+                return SamplerState.RESAMPLE
+
+        # Fallback to ADAPTIVE if something unexpected happens
+        logger.debug("ADAPTIVE triggered (fallback)")
+        return SamplerState.ADAPTIVE
     
     def sample(self, logits: torch.Tensor, attention: torch.Tensor) -> Tuple[torch.Tensor, SamplerState]:
         """Main sampling method"""
