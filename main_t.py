@@ -215,11 +215,23 @@ class SamplerConfig:
         self.hehv_attn_vent_offset = self._validate_float("hehv_attn_vent_offset", 2.0)
         self.hehv_attn_vent_coef = self._validate_float("hehv_attn_vent_coef", 0.5)
 
-        # Adaptive sampling parameters
-        self.ada_temp_logits = self._validate_float("ada_temp_logits", 0.2)
-        self.ada_temp_attn = self._validate_float("ada_temp_attn", 0.3)
-        self.ada_temp_agree = self._validate_float("ada_temp_agree", 0.1)
-        self.n_adaptive_samples = self._validate_int("n_adaptive_samples", 3, min_val=1)
+        # Enhanced adaptive sampling parameters
+        self.n_adaptive_samples = self._validate_int("n_adaptive_samples", 5, min_val=1)
+        self.ada_temp_logits = self._validate_float("ada_temp_logits", 0.3)
+        self.ada_temp_attn = self._validate_float("ada_temp_attn", 0.2)
+        self.ada_temp_agree = self._validate_float("ada_temp_agree", 0.2)
+        self.ada_top_p = self._validate_float("ada_top_p", 0.1)
+        self.ada_top_k_int = self._validate_float("ada_top_k_int", 0.3)
+        self.ada_top_k_agree = self._validate_float("ada_top_k_agree", 0.2)
+        self.ada_min_p = self._validate_float("ada_min_p", 0.5)
+
+        # Scoring coefficients
+        self.ada_score_logits_ent = self._validate_float("ada_score_logits_ent", 0.1)
+        self.ada_score_attn_ent = self._validate_float("ada_score_attn_ent", 0.2)
+        self.ada_score_logits_vent = self._validate_float("ada_score_logits_vent", 0.3)
+        self.ada_score_attn_vent = self._validate_float("ada_score_attn_vent", 0.4)
+        self.ada_score_agree = self._validate_float("ada_score_agree", 0.5)
+        self.ada_score_int = self._validate_float("ada_score_int", 0.6)
 
         # Memory and window parameters
         self.repetition_penalty = self._validate_float("repetition_penalty", 1.2, min_val=1.0)
@@ -507,103 +519,158 @@ class EntropixSampler:
         top_k: int = None, 
         min_p: float = None
     ) -> torch.Tensor:
-        """Enhanced sampling with temperature, top-p, top-k, and min-p controls"""
-        temperature = temperature or self.config.temp
-        top_p = top_p or self.config.top_p
-        top_k = top_k or self.config.top_k
-        min_p = min_p or self.config.min_p
-
-        if logits.dim() == 3:
-            logits = logits[:, -1, :]
-        elif logits.dim() == 1:
-            logits = logits.unsqueeze(0)
+        """
+        Enhanced sampling with multiple controls.
         
-        if len(self.recent_tokens) > 0:
-            for token in set(self.recent_tokens):
-                logits[:, token] = logits[:, token] / self.config.repetition_penalty
-
-        logits = logits / temperature
-
-        if min_p > 0.0:
-            sorted_logits, _ = torch.sort(logits, descending=True, dim=-1)
-            cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-            sorted_indices_to_remove = cumulative_probs > (1 - min_p)
-            sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-            sorted_indices_to_remove[..., 0] = 0
-            indices_to_remove = sorted_indices_to_remove.scatter(
-                dim=1, 
-                index=torch.argsort(logits, descending=True), 
-                src=sorted_indices_to_remove
-            )
-            logits = logits.masked_fill(indices_to_remove, float('-inf'))
-
-        top_k = min(top_k, logits.size(-1))
-        if top_k > 0:
-            top_k_logits, top_k_indices = torch.topk(logits, k=top_k, dim=-1)
+        Args:
+            logits: Model logits
+            temperature: Sampling temperature
+            top_p: Nucleus sampling threshold
+            top_k: Top-k sampling threshold
+            min_p: Minimum probability threshold
             
-            cumulative_probs = torch.cumsum(F.softmax(top_k_logits, dim=-1), dim=-1)
-            sorted_indices_to_remove = cumulative_probs > top_p
-            sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-            sorted_indices_to_remove[..., 0] = 0
-            top_k_logits = top_k_logits.masked_fill(sorted_indices_to_remove, float('-inf'))
+        Returns:
+            torch.Tensor: Selected token
+        """
+        try:
+            temperature = temperature or self.config.temp
+            top_p = top_p or self.config.top_p
+            top_k = top_k or self.config.top_k
+            min_p = min_p or self.config.min_p
 
-            probs = F.softmax(top_k_logits, dim=-1)
-            sample_idx = torch.multinomial(probs, num_samples=1, generator=self.config.generator)
+            if logits.dim() == 3:
+                logits = logits[:, -1, :]
+            elif logits.dim() == 1:
+                logits = logits.unsqueeze(0)
             
-            sampled_token = torch.gather(top_k_indices, -1, sample_idx)
-        else:
-            probs = F.softmax(logits, dim=-1)
-            sampled_token = torch.multinomial(probs, num_samples=1, generator=self.config.generator)
+            # Apply repetition penalty
+            if len(self.recent_tokens) > 0:
+                for token in set(self.recent_tokens):
+                    logits[:, token] = logits[:, token] / self.config.repetition_penalty
 
-        return sampled_token.to(torch.int32)
+            logits = logits / temperature
+
+            # Apply min-p filtering
+            if min_p > 0.0:
+                sorted_logits, _ = torch.sort(logits, descending=True, dim=-1)
+                cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+                sorted_indices_to_remove = cumulative_probs > (1 - min_p)
+                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                sorted_indices_to_remove[..., 0] = 0
+                indices_to_remove = sorted_indices_to_remove.scatter(
+                    dim=1,
+                    index=torch.argsort(logits, descending=True),
+                    src=sorted_indices_to_remove
+                )
+                logits = logits.masked_fill(indices_to_remove, float('-inf'))
+
+            # Apply top-k sampling
+            top_k = min(top_k, logits.size(-1))
+            if top_k > 0:
+                top_k_logits, top_k_indices = torch.topk(logits, k=top_k, dim=-1)
+                
+                # Apply top-p sampling to top-k candidates
+                cumulative_probs = torch.cumsum(F.softmax(top_k_logits, dim=-1), dim=-1)
+                sorted_indices_to_remove = cumulative_probs > top_p
+                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                sorted_indices_to_remove[..., 0] = 0
+                top_k_logits = top_k_logits.masked_fill(sorted_indices_to_remove, float('-inf'))
+
+                probs = F.softmax(top_k_logits, dim=-1)
+                sample_idx = torch.multinomial(probs, num_samples=1, generator=self.config.generator)
+                
+                sampled_token = torch.gather(top_k_indices, -1, sample_idx)
+            else:
+                probs = F.softmax(logits, dim=-1)
+                sampled_token = torch.multinomial(probs, num_samples=1, generator=self.config.generator)
+
+            return sampled_token.to(torch.int32)
+            
+        except Exception as e:
+            logger.error(f"Error in sampling: {str(e)}")
+            # Emergency fallback: return most likely token
+            return torch.argmax(logits, dim=-1, keepdim=True).to(torch.int32)
 
     def _adaptive_sample(self, logits: torch.Tensor, metrics: Dict[str, float]) -> torch.Tensor:
-        """Simplified adaptive sampling that uses _sample with dynamically adjusted parameters"""
+        """
+        Perform adaptive sampling based on current metrics.
+        
+        Args:
+            logits: Model logits
+            metrics: Dictionary of current metrics
+            
+        Returns:
+            torch.Tensor: Selected token
+        """
         try:
-            # Calculate adaptive temperature - higher for uncertain situations
-            base_temp_adjustment = (
-                self.config.ada_temp_logits * metrics.get("logits_varentropy", 0) +
-                self.config.ada_temp_attn * metrics.get("attn_varentropy", 0)
+            # Calculate uncertainty metrics
+            logits_uncertainty = metrics["logits_entropy"] + metrics["logits_varentropy"]
+            attn_uncertainty = metrics["attn_entropy"] + metrics["attn_varentropy"]
+            
+            # Adjust temperature based on uncertainty and agreement
+            temperature = self.config.temp * (
+                1 + self.config.ada_temp_logits * logits_uncertainty +
+                self.config.ada_temp_attn * attn_uncertainty -
+                self.config.ada_temp_agree * metrics["agreement"]
             )
-            if "agreement" in metrics:
-                base_temp_adjustment -= self.config.ada_temp_agree * metrics["agreement"]
+            temperature = max(0.1, min(2.0, temperature))
             
-            temperature = self.config.temp * (1 + base_temp_adjustment)
-            temperature = max(0.1, min(2.0, temperature))  # Clamp temperature
-            
-            # Adjust top_p based on variance measures
+            # Adjust top-p based on attention variance
             top_p = min(max(
-                self.config.top_p * (1 + 0.1 * metrics.get("rolling_varentropy", 0)), 
+                self.config.top_p * (1 + self.config.ada_top_p * metrics["attn_varentropy"]),
                 0.1
             ), 1.0)
             
-            # Adjust top_k based on interaction strength and agreement
-            top_k = self.config.top_k
-            if "interaction_strength" in metrics and "agreement" in metrics:
-                top_k_mod = 1 + 0.3 * metrics["interaction_strength"] - 0.2 * metrics["agreement"]
-                top_k = int(min(max(self.config.top_k * top_k_mod, 5), 100))
+            # Adjust top-k based on interaction strength and agreement
+            top_k = int(min(max(
+                self.config.top_k * (
+                    1 + self.config.ada_top_k_int * metrics["interaction_strength"] -
+                    self.config.ada_top_k_agree * metrics["agreement"]
+                ),
+                5
+            ), 100))
             
-            # Adjust min_p based on entropy
+            # Adjust min-p based on uncertainty
             min_p = min(max(
-                self.config.min_p * (1 - 0.5 * metrics.get("rolling_entropy", 0)), 
+                self.config.min_p * (1 - self.config.ada_min_p * logits_uncertainty),
                 0.01
             ), 0.5)
-
-            logger.debug(f"Adaptive sampling parameters - temp: {temperature:.3f}, "
-                        f"top_p: {top_p:.3f}, top_k: {top_k}, min_p: {min_p:.3f}")
             
-            # Use single _sample call with adjusted parameters
-            return self._sample(
-                logits,
-                temperature=temperature,
-                top_p=top_p,
-                top_k=top_k,
-                min_p=min_p
+            logger.debug(
+                f"Adaptive parameters:\n"
+                f"  Temperature: {temperature:.3f}\n"
+                f"  Top-p: {top_p:.3f}\n"
+                f"  Top-k: {top_k}\n"
+                f"  Min-p: {min_p:.3f}"
             )
-
+            
+            # Generate multiple samples
+            samples = []
+            for _ in range(self.config.n_adaptive_samples):
+                sample = self._sample(
+                    logits,
+                    temperature=temperature,
+                    top_p=top_p,
+                    top_k=top_k,
+                    min_p=min_p
+                )
+                samples.append(sample)
+            
+            # Score each sample and select the best one
+            sample_scores = []
+            for sample in samples:
+                score = self.score_sample(sample, logits, metrics)
+                sample_scores.append(score)
+                logger.debug(f"Sample score: {score:.3f}")
+            
+            best_sample_idx = torch.argmax(torch.tensor(sample_scores))
+            logger.debug(f"Selected sample index: {best_sample_idx}")
+            
+            return samples[best_sample_idx]
+            
         except Exception as e:
             logger.error(f"Error in adaptive sampling: {str(e)}")
-            # Fallback to basic sampling with default parameters
+            logger.info("Falling back to basic sampling")
             return self._sample(logits, self.config.temp)
 
     def determine_strategy(self, entropy: float, varentropy: float, attention_entropy: float) -> SamplerState:
@@ -654,6 +721,41 @@ class EntropixSampler:
         # Default to SAMPLE if no other strategy matches
         logger.debug("SAMPLE triggered (default)")
         return SamplerState.SAMPLE
+
+    def score_sample(self, sample: torch.Tensor, logits: torch.Tensor, metrics: Dict[str, float]) -> float:
+        """
+        Score a sample based on log probability and metrics.
+        
+        Args:
+            sample: Generated token
+            logits: Model logits
+            metrics: Dictionary of current metrics
+            
+        Returns:
+            float: Combined score for the sample
+        """
+        try:
+            # Calculate log probability score
+            sample_flat = sample.flatten().to(torch.long)
+            one_hot = F.one_hot(sample_flat, logits.shape[-1])
+            log_probs = F.log_softmax(logits, dim=-1).view(-1, logits.shape[-1])
+            log_prob = torch.sum(log_probs * one_hot).item()
+            
+            # Calculate confidence score based on multiple metrics
+            confidence_score = (
+                (1 - metrics["logits_entropy"]) * self.config.ada_score_logits_ent +
+                (1 - metrics["attn_entropy"]) * self.config.ada_score_attn_ent +
+                (1 - metrics["logits_varentropy"]) * self.config.ada_score_logits_vent +
+                (1 - metrics["attn_varentropy"]) * self.config.ada_score_attn_vent +
+                metrics["agreement"] * self.config.ada_score_agree +
+                metrics["interaction_strength"] * self.config.ada_score_int
+            )
+            
+            return log_prob + confidence_score
+            
+        except Exception as e:
+            logger.error(f"Error in score_sample: {str(e)}")
+            return float('-inf')
     
     def sample(self, logits: torch.Tensor, attention: torch.Tensor) -> Tuple[torch.Tensor, SamplerState]:
         """Main sampling method"""
@@ -822,16 +924,8 @@ def generate_response(model, tokenizer, prompt: str, max_tokens: int = 1000) -> 
             )
             
             logits = outputs.logits
-            
-            # Handle attention tensor shape
-            # The model returns a tuple of attention tensors, one for each layer
-            attention_layers = outputs.attentions  # This is a tuple of tensors
-            
-            # Get the last layer's attention
-            last_layer_attention = attention_layers[-1]  # Shape: [batch_size, num_heads, seq_len, seq_len]
-            
-            # Ensure the attention tensor is on the correct device
-            last_layer_attention = last_layer_attention.to(device)
+            attention_layers = outputs.attentions
+            last_layer_attention = attention_layers[-1].to(device)
             
             try:
                 sampled_token, state = sampler.sample(logits, last_layer_attention)
@@ -844,8 +938,9 @@ def generate_response(model, tokenizer, prompt: str, max_tokens: int = 1000) -> 
             if state == SamplerState.EOT or sampled_token[0] == tokenizer.eos_token_id:
                 break
             
+            # Updated COT insertion with more descriptive marker
             if state == SamplerState.INSERT_COT and sampled_token[0] == cfg.cot_token:
-                next_token_text = "[...]"
+                next_token_text = "🤔[Let me think about this]"
                 print("\n" + next_token_text + "\n", end="", flush=True)
             else:
                 next_token_text = tokenizer.decode(sampled_token[0])

@@ -694,6 +694,14 @@ class EntropixTGUI:
         self.ada_temp_agree_var = tk.DoubleVar(value=0.1)
         self.n_adaptive_samples_var = tk.IntVar(value=3)
 
+        # Add new adaptive scoring parameters
+        self.ada_score_logits_ent_var = tk.DoubleVar(value=0.1)
+        self.ada_score_attn_ent_var = tk.DoubleVar(value=0.2)
+        self.ada_score_logits_vent_var = tk.DoubleVar(value=0.3)
+        self.ada_score_attn_vent_var = tk.DoubleVar(value=0.4)
+        self.ada_score_agree_var = tk.DoubleVar(value=0.5)
+        self.ada_score_int_var = tk.DoubleVar(value=0.6)
+
         # RoPE parameters
         self.rope_theta_var = tk.DoubleVar(value=10000.0)
         self.rope_scaling_var = tk.DoubleVar(value=1.0)
@@ -889,19 +897,22 @@ class EntropixTGUI:
         ttk.Label(cot_frame, textvariable=self.cot_count_var).pack(fill="x")
         ttk.Label(cot_frame, textvariable=self.cot_ratio_var).pack(fill="x")
         
-        # Current State Section
+        #  Add score display to State frame
         state_frame = ttk.LabelFrame(stats_frame, text="Current State", padding=5)
         state_frame.pack(fill="x", pady=(0, 10))
         
-        # Initialize statistics variables
         stats_vars = {
             "Entropy": "N/A",
             "Varentropy": "N/A",
             "Attn Entropy": "N/A",
             "Rolling Entropy": "N/A",
             "Rolling Varentropy": "N/A",
-            "Current Strategy": "N/A"
+            "Current Strategy": "N/A",
+            "Sample Score": "N/A",  # New field for adaptive sampling score
+            "Agreement": "N/A",     # New field for head agreement
+            "Interaction": "N/A"    # New field for interaction strength
         }
+
         
         self.stat_labels = {}
         for name, initial_value in stats_vars.items():
@@ -1471,25 +1482,36 @@ class EntropixTGUI:
         self.resample_max_entropy_thresh_var.trace_add("write", validate_thresholds)
             
     def create_adaptive_controls(self, parent):
-        """Create adaptive sampling controls"""
         adaptive_group = ttk.LabelFrame(parent, text="Adaptive Parameters", padding=5)
         adaptive_group.pack(fill="x", padx=5, pady=5)
         
+        # Add new scoring coefficient controls
+        scoring_group = ttk.LabelFrame(adaptive_group, text="Scoring Coefficients", padding=5)
+        scoring_group.pack(fill="x", pady=5)
+        
         self.create_slider_with_tooltip(
-            adaptive_group, "Temperature Logits", self.ada_temp_logits_var, 0.0, 1.0,
-            PARAMETER_TOOLTIPS["adaptive_sampling"]["ada_temp_logits"]
+            scoring_group, "Score Logits Entropy", self.ada_score_logits_ent_var, 0.0, 1.0,
+            "Weight for logits entropy in sample scoring"
         )
         self.create_slider_with_tooltip(
-            adaptive_group, "Temperature Attention", self.ada_temp_attn_var, 0.0, 1.0,
-            PARAMETER_TOOLTIPS["adaptive_sampling"]["ada_temp_attn"]
+            scoring_group, "Score Attn Entropy", self.ada_score_attn_ent_var, 0.0, 1.0,
+            "Weight for attention entropy in sample scoring"
         )
         self.create_slider_with_tooltip(
-            adaptive_group, "Temperature Agreement", self.ada_temp_agree_var, 0.0, 1.0,
-            PARAMETER_TOOLTIPS["adaptive_sampling"]["ada_temp_agree"]
+            scoring_group, "Score Logits Varentropy", self.ada_score_logits_vent_var, 0.0, 1.0,
+            "Weight for logits variance entropy in sample scoring"
         )
         self.create_slider_with_tooltip(
-            adaptive_group, "Adaptive Samples", self.n_adaptive_samples_var, 1, 10,
-            PARAMETER_TOOLTIPS["adaptive_sampling"]["n_adaptive_samples"]
+            scoring_group, "Score Attn Varentropy", self.ada_score_attn_vent_var, 0.0, 1.0,
+            "Weight for attention variance entropy in sample scoring"
+        )
+        self.create_slider_with_tooltip(
+            scoring_group, "Score Agreement", self.ada_score_agree_var, 0.0, 1.0,
+            "Weight for head agreement in sample scoring"
+        )
+        self.create_slider_with_tooltip(
+            scoring_group, "Score Interaction", self.ada_score_int_var, 0.0, 1.0,
+            "Weight for head interaction in sample scoring"
         )
 
     def create_attention_controls(self, parent):
@@ -1662,6 +1684,14 @@ class EntropixTGUI:
                 self.stat_labels["Rolling Entropy"].set(f"Rolling Entropy: {stats['rolling_entropy']:.4f}")
             if 'rolling_varentropy' in stats:
                 self.stat_labels["Rolling Varentropy"].set(f"Rolling Varentropy: {stats['rolling_varentropy']:.4f}")
+
+            # Add new adaptive sampling metrics
+            if 'sample_score' in stats:
+                self.stat_labels["Sample Score"].set(f"Sample Score: {stats['sample_score']:.4f}")
+            if 'agreement' in stats:
+                self.stat_labels["Agreement"].set(f"Agreement: {stats['agreement']:.4f}")
+            if 'interaction_strength' in stats:
+                self.stat_labels["Interaction"].set(f"Interaction: {stats['interaction_strength']:.4f}")
             
             # Update current strategy
             if 'current_strategy' in stats:
