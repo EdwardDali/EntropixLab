@@ -258,6 +258,117 @@ class ModelDiscovery:
         if not self.available_models:
             logger.warning("No models found in any directory")
 
+class ParameterValidator:
+    """Ensures GUI parameters exactly match model parameters from main_t"""
+    def __init__(self):
+        # Direct copy of parameters from main_t's SamplerConfig
+        self.parameter_ranges = {
+            # Basic sampling parameters
+            "temp": {"min": 0.1, "max": 2.0, "default": 0.666},
+            "top_p": {"min": 0.0, "max": 1.0, "default": 0.90},
+            "top_k": {"min": 1, "max": 100, "default": 27},
+            "min_p": {"min": 0.0, "max": 0.5, "default": 0.05},
+            "repetition_penalty": {"min": 1.0, "max": 2.0, "default": 1.2},
+            "strategy_change_batch_size": {"min": 1, "max": 10, "default": 1},
+            
+            # Strategy thresholds
+            "argmax_entropy_thresh": {"min": 0.0, "max": 2.0, "default": 0.1},
+            "sample_min_entropy_thresh": {"min": 0.0, "max": 2.0, "default": 0.1},
+            "sample_max_entropy_thresh": {"min": 0.0, "max": 3.0, "default": 1.8},
+            "sample_varentropy_thresh": {"min": 0.0, "max": 3.0, "default": 0.1},
+            "cot_min_entropy_thresh": {"min": 0.0, "max": 3.0, "default": 1.8},
+            "cot_max_entropy_thresh": {"min": 0.0, "max": 4.0, "default": 2.5},
+            "cot_varentropy_thresh": {"min": 0.0, "max": 3.0, "default": 0.1},
+            "resample_min_entropy_thresh": {"min": 0.0, "max": 3.0, "default": 0.5},
+            "resample_max_entropy_thresh": {"min": 0.0, "max": 4.0, "default": 2.0},
+            "resample_varentropy_thresh": {"min": 0.0, "max": 5.0, "default": 3.0},
+            "adaptive_entropy_thresh": {"min": 0.0, "max": 4.0, "default": 2.5},
+            "adaptive_varentropy_thresh": {"min": 0.0, "max": 5.0, "default": 3.0},
+
+            # RoPE parameters
+            "rope_theta": {"min": 1000.0, "max": 100000.0, "default": 10000.0},
+            "rope_scaling": {"min": 0.1, "max": 2.0, "default": 1.0},
+            "rope_scale_base": {"min": 1.0, "max": 16.0, "default": 8.0},
+            "rope_scale_factor": {"min": 0.0, "max": 1.0, "default": 0.25},
+
+            # Attention coefficients
+            "helv_attn_ent_offset": {"min": 0.0, "max": 3.0, "default": 1.3},
+            "helv_attn_ent_coef": {"min": 0.0, "max": 1.0, "default": 0.2},
+            "lehv_interaction_strength_offset": {"min": 0.0, "max": 3.0, "default": 1.2},
+            "lehv_interaction_strength_coef": {"min": 0.0, "max": 1.0, "default": 0.3},
+            "hehv_attn_ent_coef": {"min": 0.0, "max": 1.0, "default": 0.2},
+            "hehv_attn_vent_offset": {"min": 0.0, "max": 5.0, "default": 2.0},
+            "hehv_attn_vent_coef": {"min": 0.0, "max": 1.0, "default": 0.5},
+
+            # Memory and window parameters
+            "max_ngram_size": {"min": 1, "max": 10, "default": 5},
+            "max_ngram_repeat": {"min": 1, "max": 10, "default": 3},
+            "window_size": {"min": 10, "max": 200, "default": 50},
+            "long_window_size": {"min": 100, "max": 1000, "default": 500},
+            "decay_factor": {"min": 0.0, "max": 1.0, "default": 0.95},
+            "long_decay_factor": {"min": 0.0, "max": 1.0, "default": 0.95},
+            
+            # Adaptive scoring coefficients
+            "ada_score_logits_ent": {"min": 0.0, "max": 1.0, "default": 0.1},
+            "ada_score_attn_ent": {"min": 0.0, "max": 1.0, "default": 0.2},
+            "ada_score_logits_vent": {"min": 0.0, "max": 1.0, "default": 0.3},
+            "ada_score_attn_vent": {"min": 0.0, "max": 1.0, "default": 0.4},
+            "ada_score_agree": {"min": 0.0, "max": 1.0, "default": 0.5},
+            "ada_score_int": {"min": 0.0, "max": 1.0, "default": 0.6},
+            
+            # Adaptive sampling coefficients
+            "ada_temp_logits": {"min": 0.0, "max": 1.0, "default": 0.3},
+            "ada_temp_attn": {"min": 0.0, "max": 1.0, "default": 0.2},
+            "ada_temp_agree": {"min": 0.0, "max": 1.0, "default": 0.2},
+            "n_adaptive_samples": {"min": 1, "max": 10, "default": 5},
+            "ada_top_p": {"min": 0.0, "max": 1.0, "default": 0.1},
+            "ada_top_k_int": {"min": 0.0, "max": 1.0, "default": 0.3},
+            "ada_top_k_agree": {"min": 0.0, "max": 1.0, "default": 0.2},
+            "ada_min_p": {"min": 0.0, "max": 1.0, "default": 0.5}
+        }
+
+    def validate_param(self, param_name: str, value: float) -> float:
+        """Validates and clamps parameter values to allowed ranges"""
+        if param_name not in self.parameter_ranges:
+            raise ValueError(f"Unknown parameter: {param_name}")
+            
+        param_range = self.parameter_ranges[param_name]
+        return max(param_range["min"], min(value, param_range["max"]))
+
+    def get_default(self, param_name: str) -> float:
+        """Gets default value for parameter"""
+        if param_name not in self.parameter_ranges:
+            raise ValueError(f"Unknown parameter: {param_name}")
+        return self.parameter_ranges[param_name]["default"]
+
+    def get_range(self, param_name: str) -> tuple:
+        """Gets allowed range for parameter"""
+        if param_name not in self.parameter_ranges:
+            raise ValueError(f"Unknown parameter: {param_name}")
+        param_range = self.parameter_ranges[param_name]
+        return (param_range["min"], param_range["max"])
+
+    def get_category_params(self, category: str) -> list:
+        """Gets all parameters in a specific category based on prefix"""
+        return [param for param in self.parameter_ranges.keys() if param.startswith(category)]
+
+    def initialize_parameter_vars(self):
+        """Initialize all parameter variables with validated defaults"""
+        # Create validator
+        self.param_validator = ParameterValidator()
+        
+        # Initialize all variables using validator
+        for param_name in self.param_validator.parameter_ranges:
+            var_name = f"{param_name}_var"
+            default_val = self.param_validator.get_default(param_name)
+            
+            if param_name in ["top_k", "max_ngram_size", "max_ngram_repeat", 
+                            "window_size", "long_window_size", "n_adaptive_samples",
+                            "strategy_change_batch_size"]:
+                setattr(self, var_name, tk.IntVar(value=default_val))
+            else:
+                setattr(self, var_name, tk.DoubleVar(value=default_val))
+
 class EntropixTGUI:
     def __init__(self):
         self.root = tk.Tk()
@@ -872,35 +983,52 @@ class EntropixTGUI:
         ttk.Button(btn_frame, text="Clear", command=self.clear_output).pack(side="left", padx=5)
 
     def create_output_areas(self, parent):
-        """Create output and statistics areas with right-side stats column"""
+        """Create output and statistics areas with improved scrolling"""
         # Main container for output and stats
         container = ttk.Frame(parent)
         container.pack(fill="both", expand=True)
-        container.grid_columnconfigure(0, weight=1)  # Output column expands
-        container.grid_columnconfigure(1, weight=0)  # Stats column fixed width
         
-        # Left side: Output text area
+        # Configure grid weights for proper expansion
+        container.grid_columnconfigure(0, weight=3)  # Output column expands more
+        container.grid_columnconfigure(1, weight=1)  # Stats column expands less
+        container.grid_rowconfigure(0, weight=1)     # Row expands vertically
+        
+        # Left side: Output text area with enhanced scrolling
         output_frame = ttk.Frame(container)
         output_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
         output_frame.grid_columnconfigure(0, weight=1)
         output_frame.grid_rowconfigure(0, weight=1)
         
-        self.output_text = scrolledtext.ScrolledText(output_frame, height=35)
+        # Create ScrolledText with increased height and proper expansion
+        self.output_text = scrolledtext.ScrolledText(
+            output_frame,
+            wrap=tk.WORD,  # Enable word wrapping
+            height=40,     # Increase default height
+            undo=True      # Enable undo/redo functionality
+        )
         self.output_text.grid(row=0, column=0, sticky="nsew")
         
-        # Right side: Statistics panel with fixed width
-        stats_frame = ttk.LabelFrame(container, text="Generation Statistics", padding=5, width=200)
-        stats_frame.grid(row=0, column=1, sticky="nsew")
-        stats_frame.grid_propagate(False)  # Prevent frame from shrinking
+        # Configure scrollbar style for better visibility
+        style = ttk.Style()
+        style.configure("Vertical.TScrollbar", arrowsize=13)  # Slightly larger arrows
         
-        # Strategy Usage Section
+        # Right side: Statistics panel
+        stats_frame = ttk.LabelFrame(container, text="Generation Statistics", padding=5)
+        stats_frame.grid(row=0, column=1, sticky="nsew")
+        
+        # Strategy Usage Section with scrolling
         strategy_frame = ttk.LabelFrame(stats_frame, text="Strategy Usage", padding=5)
         strategy_frame.pack(fill="x", pady=(0, 10))
         
-        # Use tk.Text instead of ttk.Text
-        self.strategy_stats = tk.Text(strategy_frame, height=8, width=25, wrap="word")
+        # Strategy stats with scrolling
+        self.strategy_stats = tk.Text(
+            strategy_frame,
+            height=8,
+            width=25,
+            wrap="word",
+            state="disabled"
+        )
         self.strategy_stats.pack(fill="x")
-        self.strategy_stats.configure(state="disabled")  # Make it read-only by default
         
         # CoT Statistics Section
         cot_frame = ttk.LabelFrame(stats_frame, text="Chain of Thought", padding=5)
@@ -912,7 +1040,7 @@ class EntropixTGUI:
         ttk.Label(cot_frame, textvariable=self.cot_count_var).pack(fill="x")
         ttk.Label(cot_frame, textvariable=self.cot_ratio_var).pack(fill="x")
         
-        #  Add score display to State frame
+        # State frame with improved layout
         state_frame = ttk.LabelFrame(stats_frame, text="Current State", padding=5)
         state_frame.pack(fill="x", pady=(0, 10))
         
@@ -923,17 +1051,24 @@ class EntropixTGUI:
             "Rolling Entropy": "N/A",
             "Rolling Varentropy": "N/A",
             "Current Strategy": "N/A",
-            "Sample Score": "N/A",  # New field for adaptive sampling score
-            "Agreement": "N/A",     # New field for head agreement
-            "Interaction": "N/A"    # New field for interaction strength
+            "Sample Score": "N/A",
+            "Agreement": "N/A",
+            "Interaction": "N/A"
         }
-
         
         self.stat_labels = {}
         for name, initial_value in stats_vars.items():
             var = tk.StringVar(value=f"{name}: {initial_value}")
             self.stat_labels[name] = var
             ttk.Label(state_frame, textvariable=var).pack(fill="x")
+        
+        # Add automatic scrolling method
+        def see_end(event=None):
+            self.output_text.see("end")
+            return "break"  # Prevents further event processing
+        
+        # Bind automatic scrolling to text insertion
+        self.output_text.bind('<<Modified>>', see_end)
 
     def update_model_list(self):
         """Update the model dropdown with available models"""
@@ -1180,7 +1315,11 @@ class EntropixTGUI:
 
     def update_config(self):
         """Update sampler config from GUI values"""
-        if self.sampler_config:
+        if not self.sampler_config:
+            logger.warning("No sampler config initialized")
+            return
+
+        try:
             # Basic sampling parameters
             self.sampler_config.temp = self.temp_var.get()
             self.sampler_config.top_p = self.top_p_var.get()
@@ -1188,44 +1327,8 @@ class EntropixTGUI:
             self.sampler_config.min_p = self.min_p_var.get()
             self.sampler_config.repetition_penalty = self.repetition_penalty_var.get()
             self.sampler_config.strategy_change_batch_size = self.strategy_change_batch_size_var.get()
-            
-            # Entropy thresholds
-            self.sampler_config.low_ent_thresh = self.low_ent_thresh_var.get()
-            self.sampler_config.med_ent_thresh = self.med_ent_thresh_var.get()
-            self.sampler_config.high_ent_thresh = self.high_ent_thresh_var.get()
-            self.sampler_config.high_vent_thresh = self.high_vent_thresh_var.get()
-            self.sampler_config.varentropy_threshold = self.varentropy_threshold_var.get()
-            
-            # Adaptive sampling parameters
-            self.sampler_config.ada_temp_logits = self.ada_temp_logits_var.get()
-            self.sampler_config.ada_temp_attn = self.ada_temp_attn_var.get()
-            self.sampler_config.ada_temp_agree = self.ada_temp_agree_var.get()
-            self.sampler_config.n_adaptive_samples = self.n_adaptive_samples_var.get()
 
-            # RoPE parameters
-            self.sampler_config.rope_theta = self.rope_theta_var.get()
-            self.sampler_config.rope_scaling = self.rope_scaling_var.get()
-            self.sampler_config.rope_scale_base = self.rope_scale_base_var.get()
-            self.sampler_config.rope_scale_factor = self.rope_scale_factor_var.get()
-            
-            # Attention coefficients
-            self.sampler_config.helv_attn_ent_offset = self.helv_attn_ent_offset_var.get()
-            self.sampler_config.helv_attn_ent_coef = self.helv_attn_ent_coef_var.get()
-            self.sampler_config.lehv_interaction_strength_offset = self.lehv_interaction_strength_offset_var.get()
-            self.sampler_config.lehv_interaction_strength_coef = self.lehv_interaction_strength_coef_var.get()
-            self.sampler_config.hehv_attn_ent_coef = self.hehv_attn_ent_coef_var.get()
-            self.sampler_config.hehv_attn_vent_offset = self.hehv_attn_vent_offset_var.get()
-            self.sampler_config.hehv_attn_vent_coef = self.hehv_attn_vent_coef_var.get()
-            
-            # Memory and window parameters
-            self.sampler_config.max_ngram_size = self.max_ngram_size_var.get()
-            self.sampler_config.max_ngram_repeat = self.max_ngram_repeat_var.get()
-            self.sampler_config.window_size = self.window_size_var.get()
-            self.sampler_config.long_window_size = self.long_window_size_var.get()
-            self.sampler_config.decay_factor = self.decay_factor_var.get()
-            self.sampler_config.long_decay_factor = self.long_decay_factor_var.get()
-
-             # Strategy thresholds
+            # Strategy thresholds
             self.sampler_config.argmax_entropy_thresh = self.argmax_entropy_thresh_var.get()
             self.sampler_config.sample_min_entropy_thresh = self.sample_min_entropy_thresh_var.get()
             self.sampler_config.sample_max_entropy_thresh = self.sample_max_entropy_thresh_var.get()
@@ -1239,35 +1342,77 @@ class EntropixTGUI:
             self.sampler_config.adaptive_entropy_thresh = self.adaptive_entropy_thresh_var.get()
             self.sampler_config.adaptive_varentropy_thresh = self.adaptive_varentropy_thresh_var.get()
 
-                # Get center point and radius
-            center_entropy = self.adaptive_entropy_center_var.get()
-            center_varentropy = self.adaptive_varentropy_center_var.get()
-            radius = self.adaptive_radius_var.get()
-            separation = self.quadrant_separation_var.get()
-            softness = self.boundary_softness_var.get()
+            # RoPE parameters
+            self.sampler_config.rope_theta = self.rope_theta_var.get()
+            self.sampler_config.rope_scaling = self.rope_scaling_var.get()
+            self.sampler_config.rope_scale_base = self.rope_scale_base_var.get()
+            self.sampler_config.rope_scale_factor = self.rope_scale_factor_var.get()
 
-            # Calculate strategy thresholds relative to center
-            self.sampler_config.argmax_entropy_thresh = max(0.1, 
-                center_entropy - (separation + radius))
+            # Attention coefficients
+            self.sampler_config.helv_attn_ent_offset = self.helv_attn_ent_offset_var.get()
+            self.sampler_config.helv_attn_ent_coef = self.helv_attn_ent_coef_var.get()
+            self.sampler_config.lehv_interaction_strength_offset = self.lehv_interaction_strength_offset_var.get()
+            self.sampler_config.lehv_interaction_strength_coef = self.lehv_interaction_strength_coef_var.get()
+            self.sampler_config.hehv_attn_ent_coef = self.hehv_attn_ent_coef_var.get()
+            self.sampler_config.hehv_attn_vent_offset = self.hehv_attn_vent_offset_var.get()
+            self.sampler_config.hehv_attn_vent_coef = self.hehv_attn_vent_coef_var.get()
+
+            # Memory parameters
+            self.sampler_config.max_ngram_size = self.max_ngram_size_var.get()
+            self.sampler_config.max_ngram_repeat = self.max_ngram_repeat_var.get()
+            self.sampler_config.window_size = self.window_size_var.get()
+            self.sampler_config.long_window_size = self.long_window_size_var.get()
+            self.sampler_config.decay_factor = self.decay_factor_var.get()
+            self.sampler_config.long_decay_factor = self.long_decay_factor_var.get()
+
+            # Adaptive sampling parameters
+            self.sampler_config.n_adaptive_samples = self.n_adaptive_samples_var.get()
+            self.sampler_config.ada_temp_logits = self.ada_temp_logits_var.get()
+            self.sampler_config.ada_temp_attn = self.ada_temp_attn_var.get()
+            self.sampler_config.ada_temp_agree = self.ada_temp_agree_var.get()
+            self.sampler_config.ada_score_logits_ent = self.ada_score_logits_ent_var.get()
+            self.sampler_config.ada_score_attn_ent = self.ada_score_attn_ent_var.get()
+            self.sampler_config.ada_score_logits_vent = self.ada_score_logits_vent_var.get()
+            self.sampler_config.ada_score_attn_vent = self.ada_score_attn_vent_var.get()
+            self.sampler_config.ada_score_agree = self.ada_score_agree_var.get()
+            self.sampler_config.ada_score_int = self.ada_score_int_var.get()
+
+            logger.debug("Successfully updated sampler configuration")
             
-            self.sampler_config.sample_min_entropy_thresh = max(0.1,
-                center_entropy - separation)
-            self.sampler_config.sample_max_entropy_thresh = center_entropy
-            self.sampler_config.sample_varentropy_thresh = center_varentropy + self.sample_variance_threshold_var.get()
+        except Exception as e:
+            logger.error(f"Error updating config: {str(e)}")
+
+    def create_slider_with_callback(self, parent, label: str, variable: tk.Variable, 
+                                min_val: float, max_val: float, tooltip_text: str):
+        """Create a slider that updates config when value changes"""
+        frame = ttk.Frame(parent)
+        frame.pack(fill="x", padx=5, pady=2)
+        
+        label_widget = ttk.Label(frame, text=label)
+        label_widget.grid(row=0, column=0, padx=(0, 10))
+        
+        ToolTip(label_widget, text=tooltip_text)
+        
+        def on_value_change(*args):
+            self.update_config()  # Update sampler config when slider value changes
             
-            self.sampler_config.cot_min_entropy_thresh = center_entropy + radius
-            self.sampler_config.cot_max_entropy_thresh = center_entropy + radius + self.cot_entropy_range_var.get()
-            self.sampler_config.cot_varentropy_thresh = center_varentropy - separation
-            
-            self.sampler_config.resample_min_entropy_thresh = center_entropy + radius
-            self.sampler_config.resample_varentropy_thresh = center_varentropy + self.resample_min_variance_var.get()
-            
-            # Adaptive thresholds are directly based on center point
-            self.sampler_config.adaptive_entropy_thresh = center_entropy
-            self.sampler_config.adaptive_varentropy_thresh = center_varentropy
-           
-            # Save configuration
-            self.save_config()
+        slider = ttk.Scale(
+            frame,
+            from_=min_val,
+            to=max_val,
+            variable=variable,
+            orient="horizontal"
+        )
+        slider.grid(row=0, column=1, sticky="ew", padx=5)
+        frame.grid_columnconfigure(1, weight=1)
+        
+        entry = ttk.Entry(frame, width=8, textvariable=variable)
+        entry.grid(row=0, column=2, padx=(5, 0))
+        
+        # Bind value changes to update config
+        variable.trace_add("write", on_value_change)
+        
+        return frame
 
     def save_config(self):
         """Save current configuration to file"""
@@ -1395,21 +1540,26 @@ class EntropixTGUI:
         entry.pack(side="left")
 
     def create_slider_with_tooltip(self, parent, label: str, variable: tk.Variable, 
-                                min_val: float, max_val: float, tooltip_text: str,
-                                integer: bool = False):
-        """Create a labeled slider with entry box and tooltip"""
+                                min_val: float, max_val: float, tooltip_text: str):
+        """Create a labeled slider with entry box, tooltip, and config update callback"""
         frame = ttk.Frame(parent)
         frame.pack(fill="x", padx=5, pady=2)
         
         # Configure frame grid weights
         frame.grid_columnconfigure(1, weight=1)  # Make the slider column expand
         
+        # Create and position the label
         label_widget = ttk.Label(frame, text=label)
-        label_widget.grid(row=0, column=0, padx=(0, 10))  # Add some padding between label and slider
+        label_widget.grid(row=0, column=0, padx=(0, 10))
         
-        # Create tooltip
+        # Add tooltip
         ToolTip(label_widget, text=tooltip_text)
         
+        # Create callback for value changes
+        def on_value_change(*args):
+            self.update_config()  # Update sampler config when slider value changes
+            
+        # Create and position the slider
         slider = ttk.Scale(
             frame,
             from_=min_val,
@@ -1417,83 +1567,109 @@ class EntropixTGUI:
             variable=variable,
             orient="horizontal"
         )
-        slider.grid(row=0, column=1, sticky="ew", padx=5)  # Make slider expand horizontally
+        slider.grid(row=0, column=1, sticky="ew", padx=5)
         
+        # Create and position the entry box
         entry = ttk.Entry(frame, width=8, textvariable=variable)
         entry.grid(row=0, column=2, padx=(5, 0))
+        
+        # Bind value changes to update config
+        variable.trace_add("write", on_value_change)
         
         return frame
 
     def create_entropy_controls(self, parent):
-        """Create entropy threshold controls based on adaptive center point"""
+        """Create entropy threshold controls with tripled ranges"""
         # Create main container frame
         main_container = ttk.Frame(parent)
         main_container.pack(fill="both", expand=True, padx=5, pady=5)
         main_container.grid_columnconfigure(0, weight=1)
         
-        # Add quadrant explanation label
-        explanation = ttk.Label(main_container, text="""
-        Strategy Selection:
-        Adaptive strategy forms the center point, with other strategies
-        positioned relative to it in the entropy-varentropy space.
-        
-        Quadrant Positions (relative to center):
-        - Top-Left: INSERT_COT (Higher entropy, Lower variance)
-        - Top-Right: RESAMPLE (Higher entropy, Higher variance)
-        - Bottom-Left: ARGMAX (Lower entropy, Lower variance)
-        - Bottom-Right: SAMPLE (Lower entropy, Higher variance)
-        """, justify="left")
-        explanation.pack(fill="x", pady=10)
-
-        # Adaptive Center Point Configuration
+        # Adaptive Center Point Configuration - Tripled ranges
         adaptive_group = ttk.LabelFrame(main_container, text="Adaptive Strategy (Center Point)", padding=5)
         adaptive_group.pack(fill="x", pady=5)
         
         self.create_slider_with_tooltip(
-            adaptive_group, "Center Entropy", self.adaptive_entropy_center_var, 0.0, 4.0,
+            adaptive_group, "Center Entropy", self.adaptive_entropy_center_var, 0.0, 12.0,  # Tripled from 4.0
             "Base entropy value for the center point of the adaptive strategy"
         )
         self.create_slider_with_tooltip(
-            adaptive_group, "Center Varentropy", self.adaptive_varentropy_center_var, 0.0, 4.0,
+            adaptive_group, "Center Varentropy", self.adaptive_varentropy_center_var, 0.0, 12.0,  # Tripled from 4.0
             "Base variance entropy value for the center point of the adaptive strategy"
         )
         self.create_slider_with_tooltip(
-            adaptive_group, "Radius", self.adaptive_radius_var, 0.1, 2.0,
+            adaptive_group, "Radius", self.adaptive_radius_var, 0.3, 6.0,  # Tripled from 0.1-2.0
             "Radius of the adaptive strategy region"
         )
 
-        # Strategy Offset Configuration
+        # Strategy Offset Configuration - Tripled ranges
         offset_group = ttk.LabelFrame(main_container, text="Strategy Offsets", padding=5)
         offset_group.pack(fill="x", pady=5)
         
         self.create_slider_with_tooltip(
-            offset_group, "Quadrant Separation", self.quadrant_separation_var, 0.5, 2.0,
+            offset_group, "Quadrant Separation", self.quadrant_separation_var, 1.5, 6.0,  # Tripled from 0.5-2.0
             "Distance between quadrants relative to center point"
         )
         self.create_slider_with_tooltip(
-            offset_group, "Strategy Boundary Softness", self.boundary_softness_var, 0.1, 1.0,
+            offset_group, "Strategy Boundary Softness", self.boundary_softness_var, 0.3, 3.0,  # Tripled from 0.1-1.0
             "Softness of boundaries between strategy regions"
         )
 
-        # Strategy-specific adjustments
+        # Strategy-specific adjustments - Tripled ranges
         strategies_group = ttk.LabelFrame(main_container, text="Strategy-Specific Adjustments", padding=5)
         strategies_group.pack(fill="x", pady=5)
         
         self.create_slider_with_tooltip(
-            strategies_group, "ARGMAX Range", self.argmax_range_var, 0.1, 1.0,
+            strategies_group, "ARGMAX Range", self.argmax_range_var, 0.3, 3.0,  # Tripled from 0.1-1.0
             "Range of influence for ARGMAX strategy"
         )
         self.create_slider_with_tooltip(
-            strategies_group, "SAMPLE Variance Threshold", self.sample_variance_threshold_var, 0.1, 2.0,
+            strategies_group, "SAMPLE Variance Threshold", self.sample_variance_threshold_var, 0.3, 6.0,  # Tripled from 0.1-2.0
             "Minimum variance required for SAMPLE strategy"
         )
         self.create_slider_with_tooltip(
-            strategies_group, "COT Entropy Range", self.cot_entropy_range_var, 0.1, 2.0,
+            strategies_group, "COT Entropy Range", self.cot_entropy_range_var, 0.3, 6.0,  # Tripled from 0.1-2.0
             "Entropy range for INSERT_COT strategy"
         )
         self.create_slider_with_tooltip(
-            strategies_group, "RESAMPLE Minimum Variance", self.resample_min_variance_var, 0.5, 2.0,
+            strategies_group, "RESAMPLE Minimum Variance", self.resample_min_variance_var, 1.5, 6.0,  # Tripled from 0.5-2.0
             "Minimum variance required for RESAMPLE strategy"
+        )
+
+        # Additional Strategy Thresholds - Tripled ranges
+        thresholds_group = ttk.LabelFrame(main_container, text="Strategy Thresholds", padding=5)
+        thresholds_group.pack(fill="x", pady=5)
+        
+        self.create_slider_with_tooltip(
+            thresholds_group, "ARGMAX Entropy Threshold", self.argmax_entropy_thresh_var, 0.0, 4.5,  # Tripled
+            "Maximum entropy threshold for ARGMAX strategy"
+        )
+        
+        self.create_slider_with_tooltip(
+            thresholds_group, "SAMPLE Min Entropy", self.sample_min_entropy_thresh_var, 0.0, 4.5,  # Tripled
+            "Minimum entropy threshold for SAMPLE strategy"
+        )
+        self.create_slider_with_tooltip(
+            thresholds_group, "SAMPLE Max Entropy", self.sample_max_entropy_thresh_var, 1.5, 7.5,  # Tripled
+            "Maximum entropy threshold for SAMPLE strategy"
+        )
+        
+        self.create_slider_with_tooltip(
+            thresholds_group, "COT Min Entropy", self.cot_min_entropy_thresh_var, 1.5, 7.5,  # Tripled
+            "Minimum entropy threshold for INSERT_COT strategy"
+        )
+        self.create_slider_with_tooltip(
+            thresholds_group, "COT Max Entropy", self.cot_max_entropy_thresh_var, 3.0, 12.0,  # Tripled
+            "Maximum entropy threshold for INSERT_COT strategy"
+        )
+        
+        self.create_slider_with_tooltip(
+            thresholds_group, "RESAMPLE Min Entropy", self.resample_min_entropy_thresh_var, 1.5, 9.0,  # Tripled
+            "Minimum entropy threshold for RESAMPLE strategy"
+        )
+        self.create_slider_with_tooltip(
+            thresholds_group, "RESAMPLE Max Entropy", self.resample_max_entropy_thresh_var, 3.0, 12.0,  # Tripled
+            "Maximum entropy threshold for RESAMPLE strategy"
         )
             
     def create_adaptive_controls(self, parent):
