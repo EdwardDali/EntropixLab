@@ -859,45 +859,65 @@ class EntropixTGUI:
         ttk.Button(btn_frame, text="Clear", command=self.clear_output).pack(side="left", padx=5)
 
     def create_output_areas(self, parent):
-        """Create output and statistics areas with increased height"""
-        # Main output text area with increased height
-        self.output_text = scrolledtext.ScrolledText(parent, height=35)  # Increased height
-        self.output_text.pack(fill="both", expand=True)
+        """Create output and statistics areas with right-side stats column"""
+        # Main container for output and stats
+        container = ttk.Frame(parent)
+        container.pack(fill="both", expand=True)
+        container.grid_columnconfigure(0, weight=1)  # Output column expands
+        container.grid_columnconfigure(1, weight=0)  # Stats column fixed width
         
-        # Statistics area
-        stats_frame = ttk.LabelFrame(parent, text="Statistics", padding="5")
-        stats_frame.pack(fill="x", padx=5, pady=5)
+        # Left side: Output text area
+        output_frame = ttk.Frame(container)
+        output_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        output_frame.grid_columnconfigure(0, weight=1)
+        output_frame.grid_rowconfigure(0, weight=1)
         
-        # Create three columns for statistics
-        left_stats = ttk.Frame(stats_frame)
-        left_stats.pack(side="left", fill="both", expand=True)
+        self.output_text = scrolledtext.ScrolledText(output_frame, height=35)
+        self.output_text.grid(row=0, column=0, sticky="nsew")
         
-        middle_stats = ttk.Frame(stats_frame)
-        middle_stats.pack(side="left", fill="both", expand=True)
+        # Right side: Statistics panel with fixed width
+        stats_frame = ttk.LabelFrame(container, text="Generation Statistics", padding=5, width=200)
+        stats_frame.grid(row=0, column=1, sticky="nsew")
+        stats_frame.grid_propagate(False)  # Prevent frame from shrinking
         
-        right_stats = ttk.Frame(stats_frame)
-        right_stats.pack(side="left", fill="both", expand=True)
+        # Strategy Usage Section
+        strategy_frame = ttk.LabelFrame(stats_frame, text="Strategy Usage", padding=5)
+        strategy_frame.pack(fill="x", pady=(0, 10))
         
-        # Initialize stat_labels dictionary
+        # Use tk.Text instead of ttk.Text
+        self.strategy_stats = tk.Text(strategy_frame, height=8, width=25, wrap="word")
+        self.strategy_stats.pack(fill="x")
+        self.strategy_stats.configure(state="disabled")  # Make it read-only by default
+        
+        # CoT Statistics Section
+        cot_frame = ttk.LabelFrame(stats_frame, text="Chain of Thought", padding=5)
+        cot_frame.pack(fill="x", pady=(0, 10))
+        
+        self.cot_count_var = tk.StringVar(value="Insertions: 0")
+        self.cot_ratio_var = tk.StringVar(value="Ratio: 0%")
+        
+        ttk.Label(cot_frame, textvariable=self.cot_count_var).pack(fill="x")
+        ttk.Label(cot_frame, textvariable=self.cot_ratio_var).pack(fill="x")
+        
+        # Current State Section
+        state_frame = ttk.LabelFrame(stats_frame, text="Current State", padding=5)
+        state_frame.pack(fill="x", pady=(0, 10))
+        
+        # Initialize statistics variables
+        stats_vars = {
+            "Entropy": "N/A",
+            "Varentropy": "N/A",
+            "Attn Entropy": "N/A",
+            "Rolling Entropy": "N/A",
+            "Rolling Varentropy": "N/A",
+            "Current Strategy": "N/A"
+        }
+        
         self.stat_labels = {}
-        
-        # Strategy counter in left column
-        self.strategy_var = tk.StringVar(value="Strategy Usage: N/A")
-        ttk.Label(left_stats, textvariable=self.strategy_var).pack(anchor="w")
-        
-        # Entropy metrics in middle column
-        entropy_metrics = ["Entropy", "Varentropy", "Attn Entropy"]
-        for metric in entropy_metrics:
-            var = tk.StringVar(value=f"{metric}: N/A")
-            self.stat_labels[metric] = var
-            ttk.Label(middle_stats, textvariable=var).pack(anchor="w")
-        
-        # Additional metrics in right column
-        additional_metrics = ["Rolling Entropy", "Rolling Varentropy", "Current Strategy"]
-        for metric in additional_metrics:
-            var = tk.StringVar(value=f"{metric}: N/A")
-            self.stat_labels[metric] = var
-            ttk.Label(right_stats, textvariable=var).pack(anchor="w")
+        for name, initial_value in stats_vars.items():
+            var = tk.StringVar(value=f"{name}: {initial_value}")
+            self.stat_labels[name] = var
+            ttk.Label(state_frame, textvariable=var).pack(fill="x")
 
     def update_model_list(self):
         """Update the model dropdown with available models"""
@@ -1627,14 +1647,25 @@ class EntropixTGUI:
                 self.stat_labels["Current Strategy"].set(f"Strategy: {stats['current_strategy']}")
 
     def update_strategy_display(self):
-        """Update the strategy usage display"""
+        """Update the strategy usage display with percentages"""
         total_tokens = sum(self.strategy_counter.values())
         if total_tokens > 0:
-            strategy_text = "Strategy Usage:\n"
+            # Enable text widget for updating
+            self.strategy_stats.configure(state="normal")
+            self.strategy_stats.delete("1.0", "end")
+            
             for strategy, count in self.strategy_counter.most_common():
                 percentage = (count / total_tokens) * 100
-                strategy_text += f"{strategy}: {count} ({percentage:.1f}%)\n"
-            self.strategy_var.set(strategy_text)
+                self.strategy_stats.insert("end", f"{strategy}:\n{count} ({percentage:.1f}%)\n\n")
+            
+            # Disable text widget after updating
+            self.strategy_stats.configure(state="disabled")
+        
+        # Update CoT statistics
+        cot_count = self.strategy_counter.get(SamplerState.INSERT_COT, 0)
+        cot_ratio = (cot_count / total_tokens * 100) if total_tokens > 0 else 0
+        self.cot_count_var.set(f"Insertions: {cot_count}")
+        self.cot_ratio_var.set(f"Ratio: {cot_ratio:.1f}%")
 
     def generate_text(self, prompt: str):
         """Generate text with proper newline handling and automatic output saving"""
