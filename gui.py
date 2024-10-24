@@ -1335,8 +1335,11 @@ class EntropixTGUI:
         frame = ttk.Frame(parent)
         frame.pack(fill="x", padx=5, pady=2)
         
+        # Configure frame grid weights
+        frame.grid_columnconfigure(1, weight=1)  # Make the slider column expand
+        
         label_widget = ttk.Label(frame, text=label)
-        label_widget.pack(side="left")
+        label_widget.grid(row=0, column=0, padx=(0, 10))  # Add some padding between label and slider
         
         # Create tooltip
         ToolTip(label_widget, text=tooltip_text)
@@ -1348,43 +1351,31 @@ class EntropixTGUI:
             variable=variable,
             orient="horizontal"
         )
-        slider.pack(side="left", fill="x", expand=True, padx=5)
+        slider.grid(row=0, column=1, sticky="ew", padx=5)  # Make slider expand horizontally
         
         entry = ttk.Entry(frame, width=8, textvariable=variable)
-        entry.pack(side="left")
+        entry.grid(row=0, column=2, padx=(5, 0))
         
         return frame
 
     def create_entropy_controls(self, parent):
         """Create entropy threshold controls with strategy-specific sections"""
-        scrollable_frame = ttk.Frame(parent)
-        scrollable_frame.pack(fill="both", expand=True)
-        
-        canvas = tk.Canvas(scrollable_frame)
-        scrollbar = ttk.Scrollbar(scrollable_frame, orient="vertical", command=canvas.yview)
-        inner_frame = ttk.Frame(canvas)
-        
-        # Configure scrolling
-        canvas.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
-        canvas_frame = canvas.create_window((0, 0), window=inner_frame, anchor="nw")
-        
-        def on_frame_configure(event):
-            canvas.configure(scrollregion=canvas.bbox("all"))
-        inner_frame.bind("<Configure>", on_frame_configure)
+        # Create main container frame with proper weight configuration
+        main_container = ttk.Frame(parent)
+        main_container.pack(fill="both", expand=True, padx=5, pady=5)
+        main_container.grid_columnconfigure(0, weight=1)
         
         # Argmax Strategy
-        argmax_group = ttk.LabelFrame(inner_frame, text="Argmax Strategy", padding=5)
-        argmax_group.pack(fill="x", padx=5, pady=5)
+        argmax_group = ttk.LabelFrame(main_container, text="Argmax Strategy", padding=5)
+        argmax_group.pack(fill="x", pady=5)
         self.create_slider_with_tooltip(
             argmax_group, "Max Entropy", self.argmax_entropy_thresh_var, 0.0, 1.0,
             PARAMETER_TOOLTIPS["strategy_thresholds"]["argmax_entropy_thresh"]
         )
 
         # Basic Sampling Strategy
-        sample_group = ttk.LabelFrame(inner_frame, text="Basic Sampling Strategy", padding=5)
-        sample_group.pack(fill="x", padx=5, pady=5)
+        sample_group = ttk.LabelFrame(main_container, text="Basic Sampling Strategy", padding=5)
+        sample_group.pack(fill="x", pady=5)
         self.create_slider_with_tooltip(
             sample_group, "Min Entropy", self.sample_min_entropy_thresh_var, 0.0, 2.0,
             PARAMETER_TOOLTIPS["strategy_thresholds"]["sample_min_entropy_thresh"]
@@ -1399,8 +1390,8 @@ class EntropixTGUI:
         )
 
         # Chain of Thought Strategy
-        cot_group = ttk.LabelFrame(inner_frame, text="Chain of Thought Strategy", padding=5)
-        cot_group.pack(fill="x", padx=5, pady=5)
+        cot_group = ttk.LabelFrame(main_container, text="Chain of Thought Strategy", padding=5)
+        cot_group.pack(fill="x", pady=5)
         self.create_slider_with_tooltip(
             cot_group, "Min Entropy", self.cot_min_entropy_thresh_var, 0.0, 3.0,
             PARAMETER_TOOLTIPS["strategy_thresholds"]["cot_min_entropy_thresh"]
@@ -1415,8 +1406,8 @@ class EntropixTGUI:
         )
 
         # Resample Strategy
-        resample_group = ttk.LabelFrame(inner_frame, text="Resample Strategy", padding=5)
-        resample_group.pack(fill="x", padx=5, pady=5)
+        resample_group = ttk.LabelFrame(main_container, text="Resample Strategy", padding=5)
+        resample_group.pack(fill="x", pady=5)
         self.create_slider_with_tooltip(
             resample_group, "Min Entropy", self.resample_min_entropy_thresh_var, 0.0, 3.0,
             PARAMETER_TOOLTIPS["strategy_thresholds"]["resample_min_entropy_thresh"]
@@ -1431,8 +1422,8 @@ class EntropixTGUI:
         )
 
         # Adaptive Strategy
-        adaptive_group = ttk.LabelFrame(inner_frame, text="Adaptive Strategy", padding=5)
-        adaptive_group.pack(fill="x", padx=5, pady=5)
+        adaptive_group = ttk.LabelFrame(main_container, text="Adaptive Strategy", padding=5)
+        adaptive_group.pack(fill="x", pady=5)
         self.create_slider_with_tooltip(
             adaptive_group, "Min Entropy", self.adaptive_entropy_thresh_var, 0.0, 5.0,
             PARAMETER_TOOLTIPS["strategy_thresholds"]["adaptive_entropy_thresh"]
@@ -1441,13 +1432,7 @@ class EntropixTGUI:
             adaptive_group, "Min Varentropy", self.adaptive_varentropy_thresh_var, 0.0, 5.0,
             PARAMETER_TOOLTIPS["strategy_thresholds"]["adaptive_varentropy_thresh"]
         )
-
-        def on_mousewheel(event):
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        
-        # Bind mousewheel to canvas and all children
-        canvas.bind_all("<MouseWheel>", on_mousewheel)
-        
+            
     def create_adaptive_controls(self, parent):
         """Create adaptive sampling controls"""
         adaptive_group = ttk.LabelFrame(parent, text="Adaptive Parameters", padding=5)
