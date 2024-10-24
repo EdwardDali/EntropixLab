@@ -180,13 +180,23 @@ class SamplerConfig:
         self.n_heads = self._validate_int("n_heads", 32, min_val=1)
         self.head_dim = self._validate_int("head_dim", 64, min_val=1)
 
-        # Entropy thresholds with validation
-        self.low_ent_thresh = self._validate_float("low_ent_thresh", 0.1, min_val=0.0)
-        self.low_vent_thresh = self._validate_float("low_vent_thresh", 0.1, min_val=0.0)
-        self.med_ent_thresh = self._validate_float("med_ent_thresh", 1.8, min_val=0.0)
-        self.high_ent_thresh = self._validate_float("high_ent_thresh", 2.5, min_val=0.0)
-        self.high_vent_thresh = self._validate_float("high_vent_thresh", 3.0, min_val=0.0)
-        self.varentropy_threshold = self._validate_float("varentropy_threshold", 0.1, min_val=0.0)
+        # Strategy-specific thresholds
+        self.argmax_entropy_thresh = self._validate_float("argmax_entropy_thresh", 0.1, min_val=0.0)
+        
+        self.sample_min_entropy_thresh = self._validate_float("sample_min_entropy_thresh", 0.1, min_val=0.0)
+        self.sample_max_entropy_thresh = self._validate_float("sample_max_entropy_thresh", 1.8, min_val=0.0)
+        self.sample_varentropy_thresh = self._validate_float("sample_varentropy_thresh", 0.1, min_val=0.0)
+        
+        self.cot_min_entropy_thresh = self._validate_float("cot_min_entropy_thresh", 1.8, min_val=0.0)
+        self.cot_max_entropy_thresh = self._validate_float("cot_max_entropy_thresh", 2.5, min_val=0.0)
+        self.cot_varentropy_thresh = self._validate_float("cot_varentropy_thresh", 0.1, min_val=0.0)
+        
+        self.resample_min_entropy_thresh = self._validate_float("resample_min_entropy_thresh", 0.5, min_val=0.0)
+        self.resample_max_entropy_thresh = self._validate_float("resample_max_entropy_thresh", 2.0, min_val=0.0)
+        self.resample_varentropy_thresh = self._validate_float("resample_varentropy_thresh", 3.0, min_val=0.0)
+        
+        self.adaptive_entropy_thresh = self._validate_float("adaptive_entropy_thresh", 2.5, min_val=0.0)
+        self.adaptive_varentropy_thresh = self._validate_float("adaptive_varentropy_thresh", 3.0, min_val=0.0)
 
         # Enhanced RoPE parameters
         self.max_seq_len = self._validate_int("max_seq_len", 4096, min_val=1)
@@ -211,7 +221,7 @@ class SamplerConfig:
         self.ada_temp_agree = self._validate_float("ada_temp_agree", 0.1)
         self.n_adaptive_samples = self._validate_int("n_adaptive_samples", 3, min_val=1)
 
-        # Memory and window parameters with validation
+        # Memory and window parameters
         self.repetition_penalty = self._validate_float("repetition_penalty", 1.2, min_val=1.0)
         self.max_ngram_size = self._validate_int("max_ngram_size", 5, min_val=1)
         self.max_ngram_repeat = self._validate_int("max_ngram_repeat", 3, min_val=1)
@@ -220,25 +230,6 @@ class SamplerConfig:
         self.long_window_size = self._validate_int("long_window_size", 500, min_val=1)
         self.decay_factor = self._validate_float("decay_factor", 0.95, min_val=0.0, max_val=1.0)
         self.long_decay_factor = self._validate_float("long_decay_factor", 0.95, min_val=0.0, max_val=1.0)
-
-        # Strategy-specific thresholds
-        # Strategy-specific thresholds
-        self.argmax_entropy_thresh = self._validate_float("argmax_entropy_thresh", 0.1, min_val=0.0)
-        
-        self.sample_min_entropy_thresh = self._validate_float("sample_min_entropy_thresh", 0.1, min_val=0.0)
-        self.sample_max_entropy_thresh = self._validate_float("sample_max_entropy_thresh", 1.8, min_val=0.0)
-        self.sample_varentropy_thresh = self._validate_float("sample_varentropy_thresh", 0.1, min_val=0.0)
-        
-        self.cot_min_entropy_thresh = self._validate_float("cot_min_entropy_thresh", 1.8, min_val=0.0)
-        self.cot_max_entropy_thresh = self._validate_float("cot_max_entropy_thresh", 2.5, min_val=0.0)
-        self.cot_varentropy_thresh = self._validate_float("cot_varentropy_thresh", 0.1, min_val=0.0)
-        
-        self.resample_min_entropy_thresh = self._validate_float("resample_min_entropy_thresh", 0.5, min_val=0.0)
-        self.resample_max_entropy_thresh = self._validate_float("resample_max_entropy_thresh", 2.0, min_val=0.0)
-        self.resample_varentropy_thresh = self._validate_float("resample_varentropy_thresh", 3.0, min_val=0.0)
-        
-        self.adaptive_entropy_thresh = self._validate_float("adaptive_entropy_thresh", 2.5, min_val=0.0)
-        self.adaptive_varentropy_thresh = self._validate_float("adaptive_varentropy_thresh", 3.0, min_val=0.0)
 
         # Statistics tracking
         self.stats_window_size = self._validate_int("stats_window_size", 100, min_val=1)
@@ -433,7 +424,7 @@ class EntropixSampler:
         return output, kvcache, scores
 
     def calculate_metrics(self, logits: torch.Tensor, attention: torch.Tensor) -> Dict[str, float]:
-        """Calculate metrics with fixed dimension handling"""
+        """Calculate metrics with separate tracking for logits and attention-based metrics"""
         if self.attn_stats is None:
             self.attn_stats = AttnStats.new(
                 bsz=attention.size(0),
@@ -442,14 +433,19 @@ class EntropixSampler:
                 window_size=self.config.stats_window_size
             )
         
+        # Calculate logits-based metrics
         entropy, varentropy = self.calculate_varentropy_logsoftmax(logits)
+        
+        # Calculate attention-based metrics
         attn_entropy = self.calculate_attention_entropy(attention)
         attn_varentropy = self.calculate_attention_varentropy(attention)
         agreement = self.calculate_agreement(attention)
         interaction_strength = self.calculate_interaction_strength(attention)
         
+        # Update attention stats
         self.attn_stats = self.attn_stats.update(attention, 0)
         
+        # Store both raw and rolling metrics
         return {
             "logits_entropy": entropy.mean().item(),
             "logits_varentropy": varentropy.mean().item(),
@@ -457,8 +453,8 @@ class EntropixSampler:
             "attn_varentropy": attn_varentropy.item(),
             "agreement": agreement.item(),
             "interaction_strength": interaction_strength.item(),
-            "rolling_entropy": self.attn_stats.avg_entropy,
-            "rolling_varentropy": self.attn_stats.avg_varentropy,
+            "rolling_entropy": self.attn_stats.avg_entropy,  # Keep for monitoring
+            "rolling_varentropy": self.attn_stats.avg_varentropy,  # Keep for monitoring
             "std_error": self.attn_stats.std_error
         }
 
@@ -562,75 +558,105 @@ class EntropixSampler:
         return sampled_token.to(torch.int32)
 
     def _adaptive_sample(self, logits: torch.Tensor, metrics: Dict[str, float]) -> torch.Tensor:
-        """Enhanced adaptive sampling with dynamic parameter adjustment"""
-        temperature = self.config.temp * (
-            1 + self.config.ada_temp_logits * metrics["logits_uncertainty"] + 
-            self.config.ada_temp_attn * metrics["attn_uncertainty"] - 
-            self.config.ada_temp_agree * metrics["agreement"]
-        )
-        
-        top_p = min(max(
-            self.config.top_p * (1 + 0.1 * metrics["rolling_varentropy"]), 
-            0.1
-        ), 1.0)
-        
-        top_k = int(min(max(
-            self.config.top_k * (1 + 0.3 * metrics["interaction_strength"] - 
-            0.2 * metrics["agreement"]), 
-            1
-        ), 100))
-        
-        min_p = min(max(
-            self.config.min_p * (1 - 0.5 * metrics["rolling_entropy"]), 
-            0.01
-        ), 0.5)
+        """Simplified adaptive sampling that uses _sample with dynamically adjusted parameters"""
+        try:
+            # Calculate adaptive temperature - higher for uncertain situations
+            base_temp_adjustment = (
+                self.config.ada_temp_logits * metrics.get("logits_varentropy", 0) +
+                self.config.ada_temp_attn * metrics.get("attn_varentropy", 0)
+            )
+            if "agreement" in metrics:
+                base_temp_adjustment -= self.config.ada_temp_agree * metrics["agreement"]
+            
+            temperature = self.config.temp * (1 + base_temp_adjustment)
+            temperature = max(0.1, min(2.0, temperature))  # Clamp temperature
+            
+            # Adjust top_p based on variance measures
+            top_p = min(max(
+                self.config.top_p * (1 + 0.1 * metrics.get("rolling_varentropy", 0)), 
+                0.1
+            ), 1.0)
+            
+            # Adjust top_k based on interaction strength and agreement
+            top_k = self.config.top_k
+            if "interaction_strength" in metrics and "agreement" in metrics:
+                top_k_mod = 1 + 0.3 * metrics["interaction_strength"] - 0.2 * metrics["agreement"]
+                top_k = int(min(max(self.config.top_k * top_k_mod, 5), 100))
+            
+            # Adjust min_p based on entropy
+            min_p = min(max(
+                self.config.min_p * (1 - 0.5 * metrics.get("rolling_entropy", 0)), 
+                0.01
+            ), 0.5)
 
-        samples = []
-        for _ in range(self.config.n_adaptive_samples):
-            sample = self._sample(
-                logits, 
+            logger.debug(f"Adaptive sampling parameters - temp: {temperature:.3f}, "
+                        f"top_p: {top_p:.3f}, top_k: {top_k}, min_p: {min_p:.3f}")
+            
+            # Use single _sample call with adjusted parameters
+            return self._sample(
+                logits,
                 temperature=temperature,
                 top_p=top_p,
                 top_k=top_k,
                 min_p=min_p
             )
-            samples.append(sample)
 
-        sample_scores = [self.score_sample(sample, logits, metrics) for sample in samples]
-        best_sample_idx = torch.argmax(torch.tensor(sample_scores))
-        return samples[best_sample_idx]
+        except Exception as e:
+            logger.error(f"Error in adaptive sampling: {str(e)}")
+            # Fallback to basic sampling with default parameters
+            return self._sample(logits, self.config.temp)
 
     def determine_strategy(self, entropy: float, varentropy: float, attention_entropy: float) -> SamplerState:
-        """Enhanced strategy determination with strategy-specific thresholds"""
+        """Enhanced strategy determination using correct entropy metrics"""
         recent_tokens = list(self.recent_tokens)[-1:] if self.recent_tokens else []
         if recent_tokens and self.config.stop_tokens and any(token in self.config.stop_tokens for token in recent_tokens):
             return SamplerState.EOT
 
-        rolling_entropy = self.attn_stats.avg_entropy if self.attn_stats else entropy
-        rolling_varentropy = self.attn_stats.avg_varentropy if self.attn_stats else varentropy
+        # Use logits entropy and varentropy directly instead of rolling attention-based metrics
+        current_entropy = entropy  # Direct logits entropy
+        current_varentropy = varentropy  # Direct logits varentropy
 
-        # Check each strategy's conditions in order of priority
-        if rolling_entropy <= self.config.argmax_entropy_thresh:
-            return SamplerState.ARGMAX
-                
-        if (self.config.sample_min_entropy_thresh <= rolling_entropy <= self.config.sample_max_entropy_thresh and 
-            rolling_varentropy < self.config.sample_varentropy_thresh):
-            return SamplerState.SAMPLE
-                
-        if (self.config.cot_min_entropy_thresh <= rolling_entropy <= self.config.cot_max_entropy_thresh and 
-            rolling_varentropy < self.config.cot_varentropy_thresh):
-            return SamplerState.INSERT_COT
-                
-        if (self.config.resample_min_entropy_thresh <= rolling_entropy <= self.config.resample_max_entropy_thresh and 
-            rolling_varentropy > self.config.resample_varentropy_thresh):
+        # Debug logging
+        logger.debug(f"\nCurrent Values:")
+        logger.debug(f"Logits Entropy: {current_entropy:.4f}")
+        logger.debug(f"Logits Varentropy: {current_varentropy:.4f}")
+        logger.debug(f"Attention Entropy: {attention_entropy:.4f}")
+
+        # Check conditions in order of priority, using logits-based metrics
+        
+        # 1. First check for extreme varentropy values that should trigger RESAMPLE
+        # Adjust threshold for the scale of logits varentropy
+        if current_varentropy > 5.0:  # Adjusted from config.resample_varentropy_thresh
+            logger.debug(f"RESAMPLE triggered by high varentropy: {current_varentropy:.4f}")
             return SamplerState.RESAMPLE
-                
-        if (rolling_entropy >= self.config.adaptive_entropy_thresh and 
-            rolling_varentropy >= self.config.adaptive_varentropy_thresh):
+        
+        # 2. Check for very low entropy that should trigger ARGMAX
+        if current_entropy <= self.config.argmax_entropy_thresh:
+            logger.debug(f"ARGMAX triggered by low entropy: {current_entropy:.4f}")
+            return SamplerState.ARGMAX
+        
+        # 3. Check for chain of thought conditions
+        # Adjust thresholds for logits entropy scale
+        if (2.0 <= current_entropy <= 4.0 and current_varentropy < 5.0):
+            logger.debug("INSERT_COT triggered by moderate entropy and controlled varentropy")
+            return SamplerState.INSERT_COT
+        
+        # 4. Check for basic sampling conditions
+        # Adjust thresholds for logits entropy scale
+        if (1.0 <= current_entropy <= 3.0 and current_varentropy < 3.0):
+            logger.debug("SAMPLE triggered by appropriate entropy and low varentropy")
+            return SamplerState.SAMPLE
+        
+        # 5. Finally, check for adaptive conditions
+        # These high entropy/varentropy conditions are likely being met
+        if (current_entropy >= 4.0 or current_varentropy >= 10.0):
+            logger.debug("ADAPTIVE triggered by very high entropy or varentropy")
             return SamplerState.ADAPTIVE
-                
+        
+        # Default to SAMPLE if no other conditions are met
+        logger.debug("Defaulting to SAMPLE as no other conditions met")
         return SamplerState.SAMPLE
-
+    
     def sample(self, logits: torch.Tensor, attention: torch.Tensor) -> Tuple[torch.Tensor, SamplerState]:
         """Main sampling method"""
         if not isinstance(logits, torch.Tensor) or not isinstance(attention, torch.Tensor):

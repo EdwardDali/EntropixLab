@@ -74,12 +74,23 @@ PARAMETER_TOOLTIPS = {
         "repetition_penalty": "Penalty applied to repeated tokens.",
         "strategy_change_batch_size": "Number of tokens to generate before allowing sampling strategy changes"
     },
-    "entropy_thresholds": {
-        "low_ent_thresh": "Threshold for low entropy detection. Below this triggers argmax sampling.",
-        "med_ent_thresh": "Medium entropy threshold for switching strategies.",
-        "high_ent_thresh": "High entropy threshold for adaptive sampling.",
-        "high_vent_thresh": "Threshold for high variance entropy detection.",
-        "varentropy_threshold": "Variance of entropy threshold for strategy selection."
+    "strategy_thresholds": {
+        "argmax_entropy_thresh": "Maximum entropy threshold for using argmax sampling (highly confident)",
+        
+        "sample_min_entropy_thresh": "Minimum entropy threshold for using basic sampling",
+        "sample_max_entropy_thresh": "Maximum entropy threshold for using basic sampling",
+        "sample_varentropy_thresh": "Maximum variance entropy threshold for basic sampling",
+        
+        "cot_min_entropy_thresh": "Minimum entropy threshold for inserting chain-of-thought tokens",
+        "cot_max_entropy_thresh": "Maximum entropy threshold for inserting chain-of-thought tokens",
+        "cot_varentropy_thresh": "Maximum variance entropy threshold for chain-of-thought insertion",
+        
+        "resample_min_entropy_thresh": "Minimum entropy threshold for resampling strategy",
+        "resample_max_entropy_thresh": "Maximum entropy threshold for resampling strategy",
+        "resample_varentropy_thresh": "Minimum variance entropy threshold for resampling",
+        
+        "adaptive_entropy_thresh": "Minimum entropy threshold for using adaptive sampling",
+        "adaptive_varentropy_thresh": "Minimum variance entropy threshold for adaptive sampling"
     },
     "adaptive_sampling": {
         "ada_temp_logits": "Temperature adjustment based on logits uncertainty.",
@@ -109,20 +120,6 @@ PARAMETER_TOOLTIPS = {
         "long_window_size": "Size of the long-term rolling window.",
         "decay_factor": "Decay rate for rolling statistics.",
         "long_decay_factor": "Decay rate for long-term statistics."
-    },
-    "strategy_thresholds": {
-        "argmax_entropy_thresh": "Maximum entropy threshold for using argmax sampling (highly confident)",
-        "sample_min_entropy_thresh": "Minimum entropy threshold for using basic sampling",
-        "sample_max_entropy_thresh": "Maximum entropy threshold for using basic sampling",
-        "sample_varentropy_thresh": "Maximum variance entropy threshold for basic sampling",
-        "cot_min_entropy_thresh": "Minimum entropy threshold for inserting chain-of-thought tokens",
-        "cot_max_entropy_thresh": "Maximum entropy threshold for inserting chain-of-thought tokens",
-        "cot_varentropy_thresh": "Maximum variance entropy threshold for chain-of-thought insertion",
-        "resample_min_entropy_thresh": "Minimum entropy threshold for resampling strategy",
-        "resample_max_entropy_thresh": "Maximum entropy threshold for resampling strategy",
-        "resample_varentropy_thresh": "Minimum variance entropy threshold for resampling",
-        "adaptive_entropy_thresh": "Minimum entropy threshold for using adaptive sampling",
-        "adaptive_varentropy_thresh": "Minimum variance entropy threshold for adaptive sampling"
     }
 }
 
@@ -730,23 +727,23 @@ class EntropixTGUI:
         # Add to initialize_parameter_vars
         self.strategy_change_batch_size_var = tk.IntVar(value=1)
 
-         # Strategy Selection Thresholds with paired varentropy
-        self.argmax_entropy_thresh_var = tk.DoubleVar(value=0.1)
+         # Strategy-specific thresholds adjusted for observed entropy ranges
+        self.argmax_entropy_thresh_var = tk.DoubleVar(value=0.5)
         
-        self.sample_min_entropy_thresh_var = tk.DoubleVar(value=0.1)
-        self.sample_max_entropy_thresh_var = tk.DoubleVar(value=1.8)
-        self.sample_varentropy_thresh_var = tk.DoubleVar(value=0.1)  # New
+        self.sample_min_entropy_thresh_var = tk.DoubleVar(value=0.5)
+        self.sample_max_entropy_thresh_var = tk.DoubleVar(value=1.5)
+        self.sample_varentropy_thresh_var = tk.DoubleVar(value=2.0)  # Increased for observed values
         
-        self.cot_min_entropy_thresh_var = tk.DoubleVar(value=1.8)
+        self.cot_min_entropy_thresh_var = tk.DoubleVar(value=1.5)
         self.cot_max_entropy_thresh_var = tk.DoubleVar(value=2.5)
-        self.cot_varentropy_thresh_var = tk.DoubleVar(value=0.1)  # New
+        self.cot_varentropy_thresh_var = tk.DoubleVar(value=2.0)  # Increased for observed values
         
-        self.resample_min_entropy_thresh_var = tk.DoubleVar(value=0.5)
-        self.resample_max_entropy_thresh_var = tk.DoubleVar(value=2.0)
-        self.resample_varentropy_thresh_var = tk.DoubleVar(value=3.0)  # New
+        self.resample_min_entropy_thresh_var = tk.DoubleVar(value=1.0)
+        self.resample_max_entropy_thresh_var = tk.DoubleVar(value=2.5)
+        self.resample_varentropy_thresh_var = tk.DoubleVar(value=4.0)  # Adjusted for high varentropy
         
-        self.adaptive_entropy_thresh_var = tk.DoubleVar(value=2.5)
-        self.adaptive_varentropy_thresh_var = tk.DoubleVar(value=3.0)
+        self.adaptive_entropy_thresh_var = tk.DoubleVar(value=2.0)
+        self.adaptive_varentropy_thresh_var = tk.DoubleVar(value=4.0)  # Adjusted for high varentropy
 
     def create_parameter_controls(self, parent):
         """Create organized parameter controls with additional tab"""
@@ -1083,8 +1080,15 @@ class EntropixTGUI:
                         
                         "adaptive_entropy_thresh": self.adaptive_entropy_thresh_var.get(),
                         "adaptive_varentropy_thresh": self.adaptive_varentropy_thresh_var.get()
-                    }
-                        
+                    },
+
+                    "core_entropy": {
+                        "low_ent_thresh": self.low_ent_thresh_var.get(),
+                        "med_ent_thresh": self.med_ent_thresh_var.get(),
+                        "high_ent_thresh": self.high_ent_thresh_var.get(),
+                        "high_vent_thresh": self.high_vent_thresh_var.get(),
+                        "varentropy_threshold": self.varentropy_threshold_var.get()
+                    }                   
                 }
             }
             
@@ -1219,7 +1223,7 @@ class EntropixTGUI:
             
             self.sampler_config.adaptive_entropy_thresh = self.adaptive_entropy_thresh_var.get()
             self.sampler_config.adaptive_varentropy_thresh = self.adaptive_varentropy_thresh_var.get()
-            
+           
             # Save configuration
             self.save_config()
 
@@ -1606,45 +1610,52 @@ class EntropixTGUI:
 
     def check_response_queue(self):
         """Process responses from the generation thread"""
-        while not self.response_queue.empty():
-            response = self.response_queue.get()
-            if isinstance(response, tuple):
-                response_type, content = response
-                
-                if response_type == "token":
-                    self.output_text.insert("end", content)
-                    self.output_text.see("end")
-                elif response_type == "stats":
-                    self.update_stats(content)
-                elif response_type == "strategy":
-                    self.strategy_counter[content] += 1
-                    self.update_strategy_display()
-                elif response_type == "error":
-                    self.output_text.insert("end", f"\nError: {content}\n")
+        try:
+            while not self.response_queue.empty():
+                response = self.response_queue.get_nowait()
+                if isinstance(response, tuple):
+                    response_type, content = response
                     
-        if self.generation_thread and self.generation_thread.is_alive():
+                    if response_type == "token":
+                        self.output_text.insert("end", content)
+                        self.output_text.see("end")
+                    elif response_type == "stats":
+                        if isinstance(content, dict):  # Ensure content is a dictionary
+                            self.update_stats(content)
+                    elif response_type == "strategy":
+                        self.strategy_counter[content] += 1
+                        self.update_strategy_display()
+                    elif response_type == "error":
+                        self.output_text.insert("end", f"\nError: {content}\n")
+                        
+            if self.generation_thread and self.generation_thread.is_alive():
+                self.root.after(100, self.check_response_queue)
+        except Exception as e:
+            logger.error(f"Error in check_response_queue: {str(e)}")
             self.root.after(100, self.check_response_queue)
 
     def update_stats(self, stats: Dict[str, Union[float, str]]):
-        """Update the statistics display"""
         with self.stats_lock:
-            # Update entropy metrics
-            if "entropy" in stats:
-                self.stat_labels["Entropy"].set(f"Entropy: {stats['entropy']:.4f}")
-            if "varentropy" in stats:
-                self.stat_labels["Varentropy"].set(f"Varentropy: {stats['varentropy']:.4f}")
-            if "attn_entropy" in stats:
+            # Update entropy metrics with correct keys
+            if 'logits_entropy' in stats:
+                self.stat_labels["Entropy"].set(f"Entropy: {stats['logits_entropy']:.4f}")
+            if 'logits_varentropy' in stats:
+                self.stat_labels["Varentropy"].set(f"Varentropy: {stats['logits_varentropy']:.4f}")
+            if 'attn_entropy' in stats:
                 self.stat_labels["Attn Entropy"].set(f"Attn Entropy: {stats['attn_entropy']:.4f}")
             
             # Update rolling statistics
-            if "rolling_entropy" in stats:
+            if 'rolling_entropy' in stats:
                 self.stat_labels["Rolling Entropy"].set(f"Rolling Entropy: {stats['rolling_entropy']:.4f}")
-            if "rolling_varentropy" in stats:
+            if 'rolling_varentropy' in stats:
                 self.stat_labels["Rolling Varentropy"].set(f"Rolling Varentropy: {stats['rolling_varentropy']:.4f}")
             
             # Update current strategy
-            if "current_strategy" in stats:
-                self.stat_labels["Current Strategy"].set(f"Strategy: {stats['current_strategy']}")
+            if 'current_strategy' in stats:
+                self.stat_labels["Current Strategy"].set(f"Current: {stats['current_strategy']}")
+                
+            # Log the stats for debugging
+            logger.debug(f"Updating stats: {stats}")
 
     def update_strategy_display(self):
         """Update the strategy usage display with percentages"""
@@ -1668,8 +1679,11 @@ class EntropixTGUI:
         self.cot_ratio_var.set(f"Ratio: {cot_ratio:.1f}%")
 
     def generate_text(self, prompt: str):
-        """Generate text with proper newline handling and automatic output saving"""
+        """Generate text with proper error handling and output saving"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        generated_tokens = []  # Store tokens
+        current_stats = {}  # Store current statistics
+        
         try:
             # Encode input with proper truncation
             input_ids = self.tokenizer.encode(
@@ -1686,8 +1700,6 @@ class EntropixTGUI:
             self.response_queue.put(("token", f"Prompt: {formatted_prompt}\n\nGenerated response:\n"))
             
             sampler = EntropixSampler(self.sampler_config)
-            generated_tokens = []  # Store all generated tokens
-            current_stats = {}  # Store current statistics
             
             with torch.inference_mode():
                 for _ in range(1000):  # Max tokens
@@ -1705,11 +1717,14 @@ class EntropixTGUI:
                     
                     try:
                         sampled_token, state = sampler.sample(logits, attention)
-                    except Exception as e:
-                        self.response_queue.put(("error", f"Sampling error: {str(e)}"))
+                        current_stats = sampler.calculate_metrics(logits, attention)
+                        current_stats['current_strategy'] = state.name
+                        self.response_queue.put(("stats", current_stats))
+                        self.response_queue.put(("strategy", state.name))
+                        
+                    except Exception as sampling_error:
+                        self.response_queue.put(("error", f"Sampling error: {str(sampling_error)}"))
                         break
-                    
-                    self.response_queue.put(("strategy", state.name))
                     
                     if state == SamplerState.EOT or sampled_token[0] == self.tokenizer.eos_token_id:
                         self.response_queue.put(("token", "\n[End of Text]\n"))
@@ -1721,9 +1736,7 @@ class EntropixTGUI:
                         self.response_queue.put(("token", f"\n{next_token_text}\n"))
                         generated_tokens.append(next_token_text)
                     else:
-                        # Decode token and handle special characters
                         next_token_text = self.tokenizer.decode(sampled_token[0])
-                        # Replace literal \n with actual newlines
                         next_token_text = next_token_text.replace('\\n', '\n')
                         self.response_queue.put(("token", next_token_text))
                         generated_tokens.append(next_token_text)
@@ -1738,77 +1751,18 @@ class EntropixTGUI:
                         self.response_queue.put(("token", "\n[Reached maximum sequence length]\n"))
                         generated_tokens.append("[Reached maximum sequence length]")
                         break
-                    
-                    if _ % 5 == 0:  # Update stats periodically
-                        current_stats = sampler.calculate_metrics(logits, attention)
-                        self.response_queue.put(("stats", current_stats))
 
-                # After generation, save the output
-                full_output = "".join(generated_tokens)
-                
-                # Ensure output directory exists
-                self.output_dir.mkdir(exist_ok=True)
-                
-                # Prepare the complete output content
-                output_content = [
-                    "=== Generation Information ===",
-                    f"Timestamp: {datetime.now().isoformat()}",
-                    f"Model: {self.current_model_name}",
-                    f"Model Hash: {self.current_model_hash}",
-                    "",
-                    "=== Prompt ===",
-                    prompt,
-                    "",
-                    "=== Generated Output ===",
-                    full_output,
-                    "",
-                    "=== Generation Statistics ===",
-                    f"Total Tokens: {sum(self.strategy_counter.values())}",
-                    "",
-                    "Strategy Usage:",
-                ]
-                
-                # Add strategy statistics
-                total_tokens = sum(self.strategy_counter.values())
-                if total_tokens > 0:
-                    for strategy, count in self.strategy_counter.most_common():
-                        percentage = (count / total_tokens) * 100
-                        output_content.append(f"  {strategy}: {count} ({percentage:.1f}%)")
-                
-                # Add final statistics and configuration
-                output_content.extend([
-                    "",
-                    "=== Current Statistics ===",
-                    json.dumps(current_stats, indent=2),
-                    "",
-                    "=== Configuration Used ===",
-                    json.dumps(self.get_current_config(), indent=2)
-                ])
-                
-                # Save to file
-                output_filename = f"{self.current_model_hash}_{timestamp}.txt"
-                output_path = self.output_dir / output_filename
-                
-                with open(output_path, "w", encoding="utf-8") as f:
-                    f.write("\n".join(output_content))
-                
-                logger.info(f"Generation output saved to {output_path}")
-                
-                # Update the configuration if it was modified during generation
-                self.save_model_config()
+                # Save generation output after successful generation
+                self.save_generation_output(prompt, generated_tokens, current_stats)
                 
         except Exception as e:
-            self.response_queue.put(("error", str(e)))
-            logger.error(f"Generation error: {str(e)}")
-            # Try to save even if there was an error
-            try:
-                if generated_tokens:  # If we generated any output before the error
-                    error_output_path = self.output_dir / f"error_{self.current_model_hash}_{timestamp}.txt"
-                    with open(error_output_path, "w", encoding="utf-8") as f:
-                        f.write(f"Error during generation: {str(e)}\n\nPartial output:\n{''.join(generated_tokens)}")
-                    logger.info(f"Partial output saved to {error_output_path}")
-            except Exception as save_error:
-                logger.error(f"Error saving partial output: {str(save_error)}")
+            error_msg = f"Generation error: {str(e)}"
+            self.response_queue.put(("error", error_msg))
+            logger.error(error_msg)
+            
+            # Try to save partial output if available
+            if generated_tokens:
+                self.save_generation_output(prompt, generated_tokens, current_stats)
 
 
     def get_current_config(self):
@@ -1887,12 +1841,15 @@ class EntropixTGUI:
             }
         }
 
-    def save_generation_output(self, prompt: str, generated_text: str, final_stats: dict):
+    def save_generation_output(self, prompt: str, generated_tokens: List[str], final_stats: dict) -> None:
         """Save the generation output automatically with all context"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         try:
             # Ensure output directory exists
             self.output_dir.mkdir(exist_ok=True)
+            
+            # Create the output content
+            generated_text = ''.join(str(token) for token in generated_tokens)
             
             # Prepare the complete output content
             output_content = [
@@ -1920,78 +1877,11 @@ class EntropixTGUI:
                     percentage = (count / total_tokens) * 100
                     output_content.append(f"  {strategy}: {count} ({percentage:.1f}%)")
             
-            # Add strategy thresholds
+            # Add final statistics
             output_content.extend([
                 "",
-                "=== Strategy Thresholds ===",
-                "Argmax Strategy:",
-                f"  Max Entropy: {self.argmax_entropy_thresh_var.get():.3f}",
-                
-                "\nBasic Sampling Strategy:",
-                f"  Min Entropy: {self.sample_min_entropy_thresh_var.get():.3f}",
-                f"  Max Entropy: {self.sample_max_entropy_thresh_var.get():.3f}",
-                f"  Max Varentropy: {self.sample_varentropy_thresh_var.get():.3f}",
-                
-                "\nChain of Thought Strategy:",
-                f"  Min Entropy: {self.cot_min_entropy_thresh_var.get():.3f}",
-                f"  Max Entropy: {self.cot_max_entropy_thresh_var.get():.3f}",
-                f"  Max Varentropy: {self.cot_varentropy_thresh_var.get():.3f}",
-                
-                "\nResample Strategy:",
-                f"  Min Entropy: {self.resample_min_entropy_thresh_var.get():.3f}",
-                f"  Max Entropy: {self.resample_max_entropy_thresh_var.get():.3f}",
-                f"  Min Varentropy: {self.resample_varentropy_thresh_var.get():.3f}",
-                
-                "\nAdaptive Strategy:",
-                f"  Min Entropy: {self.adaptive_entropy_thresh_var.get():.3f}",
-                f"  Min Varentropy: {self.adaptive_varentropy_thresh_var.get():.3f}",
-                "",
-                "=== Current Statistics ===",
-                json.dumps(final_stats, indent=2),
-                "",
-                "=== Complete Configuration ===",
-                "Basic Sampling Parameters:",
-                f"  Temperature: {self.temp_var.get():.3f}",
-                f"  Top-P: {self.top_p_var.get():.3f}",
-                f"  Top-K: {self.top_k_var.get()}",
-                f"  Min-P: {self.min_p_var.get():.3f}",
-                f"  Repetition Penalty: {self.repetition_penalty_var.get():.3f}",
-                f"  Strategy Change Batch Size: {self.strategy_change_batch_size_var.get()}",
-                
-                "\nAdaptive Sampling Parameters:",
-                f"  Temperature Logits: {self.ada_temp_logits_var.get():.3f}",
-                f"  Temperature Attention: {self.ada_temp_attn_var.get():.3f}",
-                f"  Temperature Agreement: {self.ada_temp_agree_var.get():.3f}",
-                f"  Adaptive Samples: {self.n_adaptive_samples_var.get()}",
-                
-                "\nAttention Coefficients:",
-                f"  HELV Attention Entropy Offset: {self.helv_attn_ent_offset_var.get():.3f}",
-                f"  HELV Attention Entropy Coefficient: {self.helv_attn_ent_coef_var.get():.3f}",
-                f"  LEHV Interaction Strength Offset: {self.lehv_interaction_strength_offset_var.get():.3f}",
-                f"  LEHV Interaction Strength Coefficient: {self.lehv_interaction_strength_coef_var.get():.3f}",
-                f"  HEHV Attention Entropy Coefficient: {self.hehv_attn_ent_coef_var.get():.3f}",
-                f"  HEHV Attention Variance Offset: {self.hehv_attn_vent_offset_var.get():.3f}",
-                f"  HEHV Attention Variance Coefficient: {self.hehv_attn_vent_coef_var.get():.3f}",
-                
-                "\nRoPE Parameters:",
-                f"  Theta: {self.rope_theta_var.get():.1f}",
-                f"  Scaling: {self.rope_scaling_var.get():.3f}",
-                f"  Scale Base: {self.rope_scale_base_var.get():.3f}",
-                f"  Scale Factor: {self.rope_scale_factor_var.get():.3f}",
-                
-                "\nMemory and Context Parameters:",
-                f"  Max N-gram Size: {self.max_ngram_size_var.get()}",
-                f"  Max N-gram Repeat: {self.max_ngram_repeat_var.get()}",
-                f"  Window Size: {self.window_size_var.get()}",
-                f"  Long Window Size: {self.long_window_size_var.get()}",
-                f"  Decay Factor: {self.decay_factor_var.get():.3f}",
-                f"  Long Decay Factor: {self.long_decay_factor_var.get():.3f}",
-                
-                "\n=== Generation Settings ===",
-                f"Max Tokens: 1000",
-                f"Device: {device}",
-                f"Model Max Length: {self.model.config.max_position_embeddings if self.model else None}",
-                f"Truncation Length: {self.model.config.max_position_embeddings - 1000 if self.model else None}",
+                "=== Final Statistics ===",
+                json.dumps(final_stats, indent=2)
             ])
             
             # Save to file
@@ -2005,12 +1895,12 @@ class EntropixTGUI:
                     
         except Exception as e:
             logger.error(f"Error saving output: {str(e)}")
-            # Try to save even if there was an error
+            # Try to save partial output
             try:
-                if generated_text:  # If we generated any output before the error
+                if generated_tokens:
                     error_output_path = self.output_dir / f"error_{self.current_model_hash}_{timestamp}.txt"
                     with open(error_output_path, "w", encoding="utf-8") as f:
-                        f.write(f"Error during generation: {str(e)}\n\nPartial output:\n{generated_text}")
+                        f.write(f"Error during generation: {str(e)}\n\nPartial output:\n{''.join(str(token) for token in generated_tokens)}")
                     logger.info(f"Partial output saved to {error_output_path}")
             except Exception as save_error:
                 logger.error(f"Error saving partial output: {str(save_error)}")
