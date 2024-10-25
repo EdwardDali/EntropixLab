@@ -1008,15 +1008,15 @@ class EntropixTGUI:
         # Create ScrolledText with increased height and proper expansion
         self.output_text = scrolledtext.ScrolledText(
             output_frame,
-            wrap=tk.WORD,  # Enable word wrapping
-            height=40,     # Increase default height
-            undo=True      # Enable undo/redo functionality
+            wrap=tk.WORD,
+            height=40,
+            undo=True
         )
         self.output_text.grid(row=0, column=0, sticky="nsew")
         
         # Configure scrollbar style for better visibility
         style = ttk.Style()
-        style.configure("Vertical.TScrollbar", arrowsize=13)  # Slightly larger arrows
+        style.configure("Vertical.TScrollbar", arrowsize=13)
         
         # Right side: Statistics panel
         stats_frame = ttk.LabelFrame(container, text="Generation Statistics", padding=5)
@@ -1036,16 +1036,6 @@ class EntropixTGUI:
         )
         self.strategy_stats.pack(fill="x")
         
-        # CoT Statistics Section
-        cot_frame = ttk.LabelFrame(stats_frame, text="Chain of Thought", padding=5)
-        cot_frame.pack(fill="x", pady=(0, 10))
-        
-        self.cot_count_var = tk.StringVar(value="Insertions: 0")
-        self.cot_ratio_var = tk.StringVar(value="Ratio: 0%")
-        
-        ttk.Label(cot_frame, textvariable=self.cot_count_var).pack(fill="x")
-        ttk.Label(cot_frame, textvariable=self.cot_ratio_var).pack(fill="x")
-        
         # State frame with improved layout
         state_frame = ttk.LabelFrame(stats_frame, text="Current State", padding=5)
         state_frame.pack(fill="x", pady=(0, 10))
@@ -1054,8 +1044,8 @@ class EntropixTGUI:
             "Entropy": "N/A",
             "Varentropy": "N/A",
             "Attn Entropy": "N/A",
-            "Attn Varentropy": "N/A",  # Added this line
-            "Weighted Score": "N/A",    # Added this line
+            "Attn Varentropy": "N/A",
+            "Weighted Score": "N/A",
             "Rolling Entropy": "N/A",
             "Rolling Varentropy": "N/A",
             "Current Strategy": "N/A",
@@ -1070,12 +1060,10 @@ class EntropixTGUI:
             self.stat_labels[name] = var
             ttk.Label(state_frame, textvariable=var).pack(fill="x")
         
-        # Add automatic scrolling method
         def see_end(event=None):
             self.output_text.see("end")
-            return "break"  # Prevents further event processing
+            return "break"
         
-        # Bind automatic scrolling to text insertion
         self.output_text.bind('<<Modified>>', see_end)
 
     def update_model_list(self):
@@ -1861,20 +1849,25 @@ class EntropixTGUI:
             self.root.after(100, self.check_response_queue)
 
     def update_stats(self, stats: Dict[str, Union[float, str]]):
-        """Updated stats display to include weighted scoring information"""
+        """Update statistics display with all metrics including attention varentropy"""
         with self.stats_lock:
-            # Existing stats updates
-            if 'logits_entropy' in stats:
-                self.stat_labels["Entropy"].set(f"Entropy: {stats['logits_entropy']:.4f} (w:0.4)")
-            if 'logits_varentropy' in stats:
-                self.stat_labels["Varentropy"].set(f"Varentropy: {stats['logits_varentropy']:.4f} (w:0.2)")
-            if 'attn_entropy' in stats:
-                self.stat_labels["Attn Entropy"].set(f"Attn Entropy: {stats['attn_entropy']:.4f} (w:0.3)")
-            if 'attn_varentropy' in stats:
-                self.stat_labels["Attn Varentropy"].set(f"Attn Varentropy: {stats['attn_varentropy']:.4f} (w:0.1)")
+            # Base metrics updates
+            metrics_mapping = {
+                "Entropy": ("logits_entropy", 0.4),
+                "Varentropy": ("logits_varentropy", 0.2),
+                "Attn Entropy": ("attn_entropy", 0.3),
+                "Attn Varentropy": ("attn_varentropy", 0.1)
+            }
             
-            # Add weighted score if available
-            if all(key in stats for key in ['logits_entropy', 'logits_varentropy', 'attn_entropy', 'attn_varentropy']):
+            for display_name, (metric_key, weight) in metrics_mapping.items():
+                if metric_key in stats:
+                    self.stat_labels[display_name].set(
+                        f"{display_name}: {stats[metric_key]:.4f} (w:{weight:.1f})"
+                    )
+            
+            # Additional metrics
+            if all(key in stats for key in ['logits_entropy', 'logits_varentropy', 
+                                        'attn_entropy', 'attn_varentropy']):
                 weighted_score = (
                     stats['logits_entropy'] * 0.4 +
                     stats['logits_varentropy'] * 0.2 +
@@ -1883,15 +1876,19 @@ class EntropixTGUI:
                 )
                 self.stat_labels["Weighted Score"].set(f"Weighted Score: {weighted_score:.4f}")
             
-            # Update rolling and other existing stats
+            # Rolling statistics
             if 'rolling_entropy' in stats:
-                self.stat_labels["Rolling Entropy"].set(f"Rolling Entropy: {stats['rolling_entropy']:.4f}")
+                self.stat_labels["Rolling Entropy"].set(
+                    f"Rolling Entropy: {stats['rolling_entropy']:.4f}"
+                )
             if 'rolling_varentropy' in stats:
-                self.stat_labels["Rolling Varentropy"].set(f"Rolling Varentropy: {stats['rolling_varentropy']:.4f}")
+                self.stat_labels["Rolling Varentropy"].set(
+                    f"Rolling Varentropy: {stats['rolling_varentropy']:.4f}"
+                )
+                
+            # Strategy and interaction metrics
             if 'current_strategy' in stats:
                 self.stat_labels["Current Strategy"].set(f"Current: {stats['current_strategy']}")
-                
-            # Update existing agreement and interaction stats
             if 'agreement' in stats:
                 self.stat_labels["Agreement"].set(f"Agreement: {stats['agreement']:.4f}")
             if 'interaction_strength' in stats:
@@ -1907,22 +1904,16 @@ class EntropixTGUI:
             
             for strategy, count in self.strategy_counter.most_common():
                 percentage = (count / total_tokens) * 100
-                self.strategy_stats.insert("end", f"{strategy}:\n{count} ({percentage:.1f}%)\n\n")
+                self.strategy_stats.insert("end", f"{strategy}: {count} ({percentage:.1f}%)\n\n")
             
             # Disable text widget after updating
             self.strategy_stats.configure(state="disabled")
-        
-        # Update CoT statistics
-        cot_count = self.strategy_counter.get(SamplerState.INSERT_COT, 0)
-        cot_ratio = (cot_count / total_tokens * 100) if total_tokens > 0 else 0
-        self.cot_count_var.set(f"Insertions: {cot_count}")
-        self.cot_ratio_var.set(f"Ratio: {cot_ratio:.1f}%")
 
     def generate_text(self, prompt: str):
         """Generate text with proper error handling and output saving"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        generated_tokens = []  # Store tokens
-        current_stats = {}  # Store current statistics
+        generated_tokens = []
+        current_stats = {}
         
         try:
             # Encode input with proper truncation
@@ -1953,14 +1944,21 @@ class EntropixTGUI:
                     )
                     
                     logits = outputs.logits
-                    attention = outputs.attentions[-1]  # Last layer's attention
+                    attention = outputs.attentions[-1]
                     
                     try:
                         sampled_token, state = sampler.sample(logits, attention)
                         current_stats = sampler.calculate_metrics(logits, attention)
                         current_stats['current_strategy'] = state.name
                         self.response_queue.put(("stats", current_stats))
-                        self.response_queue.put(("strategy", state.name))
+                        
+                        # Only send strategy update if we're actually using that strategy
+                        # For INSERT_COT, this means we actually inserted the token
+                        if state == SamplerState.INSERT_COT:
+                            if sampled_token[0] == self.sampler_config.cot_token:
+                                self.response_queue.put(("strategy", state.name))
+                        else:
+                            self.response_queue.put(("strategy", state.name))
                         
                     except Exception as sampling_error:
                         self.response_queue.put(("error", f"Sampling error: {str(sampling_error)}"))
@@ -2000,7 +1998,6 @@ class EntropixTGUI:
             self.response_queue.put(("error", error_msg))
             logger.error(error_msg)
             
-            # Try to save partial output if available
             if generated_tokens:
                 self.save_generation_output(prompt, generated_tokens, current_stats)
 
