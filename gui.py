@@ -1054,6 +1054,8 @@ class EntropixTGUI:
             "Entropy": "N/A",
             "Varentropy": "N/A",
             "Attn Entropy": "N/A",
+            "Attn Varentropy": "N/A",  # Added this line
+            "Weighted Score": "N/A",    # Added this line
             "Rolling Entropy": "N/A",
             "Rolling Varentropy": "N/A",
             "Current Strategy": "N/A",
@@ -1859,35 +1861,41 @@ class EntropixTGUI:
             self.root.after(100, self.check_response_queue)
 
     def update_stats(self, stats: Dict[str, Union[float, str]]):
+        """Updated stats display to include weighted scoring information"""
         with self.stats_lock:
-            # Update entropy metrics with correct keys
+            # Existing stats updates
             if 'logits_entropy' in stats:
-                self.stat_labels["Entropy"].set(f"Entropy: {stats['logits_entropy']:.4f}")
+                self.stat_labels["Entropy"].set(f"Entropy: {stats['logits_entropy']:.4f} (w:0.4)")
             if 'logits_varentropy' in stats:
-                self.stat_labels["Varentropy"].set(f"Varentropy: {stats['logits_varentropy']:.4f}")
+                self.stat_labels["Varentropy"].set(f"Varentropy: {stats['logits_varentropy']:.4f} (w:0.2)")
             if 'attn_entropy' in stats:
-                self.stat_labels["Attn Entropy"].set(f"Attn Entropy: {stats['attn_entropy']:.4f}")
+                self.stat_labels["Attn Entropy"].set(f"Attn Entropy: {stats['attn_entropy']:.4f} (w:0.3)")
+            if 'attn_varentropy' in stats:
+                self.stat_labels["Attn Varentropy"].set(f"Attn Varentropy: {stats['attn_varentropy']:.4f} (w:0.1)")
             
-            # Update rolling statistics
+            # Add weighted score if available
+            if all(key in stats for key in ['logits_entropy', 'logits_varentropy', 'attn_entropy', 'attn_varentropy']):
+                weighted_score = (
+                    stats['logits_entropy'] * 0.4 +
+                    stats['logits_varentropy'] * 0.2 +
+                    stats['attn_entropy'] * 0.3 +
+                    stats['attn_varentropy'] * 0.1
+                )
+                self.stat_labels["Weighted Score"].set(f"Weighted Score: {weighted_score:.4f}")
+            
+            # Update rolling and other existing stats
             if 'rolling_entropy' in stats:
                 self.stat_labels["Rolling Entropy"].set(f"Rolling Entropy: {stats['rolling_entropy']:.4f}")
             if 'rolling_varentropy' in stats:
                 self.stat_labels["Rolling Varentropy"].set(f"Rolling Varentropy: {stats['rolling_varentropy']:.4f}")
-
-            # Add new adaptive sampling metrics
-            if 'sample_score' in stats:
-                self.stat_labels["Sample Score"].set(f"Sample Score: {stats['sample_score']:.4f}")
+            if 'current_strategy' in stats:
+                self.stat_labels["Current Strategy"].set(f"Current: {stats['current_strategy']}")
+                
+            # Update existing agreement and interaction stats
             if 'agreement' in stats:
                 self.stat_labels["Agreement"].set(f"Agreement: {stats['agreement']:.4f}")
             if 'interaction_strength' in stats:
                 self.stat_labels["Interaction"].set(f"Interaction: {stats['interaction_strength']:.4f}")
-            
-            # Update current strategy
-            if 'current_strategy' in stats:
-                self.stat_labels["Current Strategy"].set(f"Current: {stats['current_strategy']}")
-                
-            # Log the stats for debugging
-            logger.debug(f"Updating stats: {stats}")
 
     def update_strategy_display(self):
         """Update the strategy usage display with percentages"""

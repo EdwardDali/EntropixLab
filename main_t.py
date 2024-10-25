@@ -840,6 +840,146 @@ class EntropixSampler:
         weight_sum = sum(weights)
         
         return weighted_sum / weight_sum if weight_sum > 0 else 0.0
+    
+    def normalize_metrics(self, metrics: Dict[str, float]) -> Dict[str, float]:
+        """
+        Normalize metrics to [0,1] range using rolling statistics.
+        
+        Args:
+            metrics (Dict[str, float]): Raw metrics from current step
+            
+        Returns:
+            Dict[str, float]: Normalized metrics
+        """
+        # Get mean and std from rolling windows
+        means = {
+            "logits_entropy": np.mean(list(self.entropy_window)) if self.entropy_window else 0,
+            "logits_varentropy": np.mean(list(self.varentropy_window)) if self.varentropy_window else 0,
+            "attn_entropy": np.mean(list(self.attention_entropy_window)) if self.attention_entropy_window else 0,
+            "attn_varentropy": self.attn_stats.avg_varentropy if self.attn_stats else 0
+        }
+        
+        stds = {
+            "logits_entropy": np.std(list(self.entropy_window)) if len(self.entropy_window) > 1 else 1,
+            "logits_varentropy": np.std(list(self.varentropy_window)) if len(self.varentropy_window) > 1 else 1,
+            "attn_entropy": np.std(list(self.attention_entropy_window)) if len(self.attention_entropy_window) > 1 else 1,
+            "attn_varentropy": self.attn_stats.std_error if self.attn_stats else 1
+        }
+        
+        # Z-score normalization then sigmoid scaling to [0,1]
+        normalized = {}
+        for metric, value in metrics.items():
+            z_score = (value - means[metric]) / max(stds[metric], 1e-8)
+            normalized[metric] = 1 / (1 + np.exp(-z_score))
+        
+        return normalized
+
+    def calculate_weighted_score(self, metrics: Dict[str, float], weights: Dict[str, float]) -> float:
+        """
+        Calculate weighted score from normalized metrics.
+        
+        Args:
+            metrics (Dict[str, float]): Normalized metrics
+            weights (Dict[str, float]): Weight factors for each metric
+            
+        Returns:
+            float: Combined weighted score
+        """
+        score = 0.0
+        for metric, weight in weights.items():
+            score += metrics[metric] * weight
+        return score
+
+    def determine_strategy(self, entropy: float, varentropy: float, attention_entropy: float) -> SamplerState:
+        """
+        Determine sampling strategy using weighted metric combinations.
+        
+        Args:
+            entropy (float): Current logits entropy
+            varentropy (float): Current logits varentropy  
+            attention_entropy (float): Current attention entropy
+            
+        Returns:
+            SamplerState: Selected sampling strategy
+        """
+        # Check for stop condition
+        recent_tokens = list(self.recent_tokens)[-1:] if self.recent_tokens else []
+        if recent_tokens and self.config.stop_tokens and any(token in self.config.stop_tokens for token in recent_tokens):
+            return SamplerState.EOT
+
+        # Current metrics
+        metrics = {
+            "logits_entropy": entropy,
+            "logits_varentropy": varentropy,
+            "attn_entropy": attention_entropy,
+            "attn_varentropy": self.attn_stats.avg_varentropy if self.attn_stats else 0
+        }
+        
+        # Primary weights for each factor
+        weights = {
+            "logits_entropy": 0.4,    # Highest weight - direct measure of token uncertainty
+            "logits_varentropy": 0.2, # Lower - secondary token distribution characteristic
+            "attn_entropy": 0.3,      # Moderate - important context processing signal
+            "attn_varentropy": 0.1    # Lowest - supplementary attention pattern info
+        }
+        
+        # Normalize metrics
+        normalized_metrics = self.normalize_metrics(metrics)
+        
+        # Calculate weighted score
+        score = self.calculate_weighted_score(normalized_metrics, weights)
+        
+        # Define strategy regions based on score ranges
+        if score < 0.3:  # Low uncertainty 
+            return SamplerState.ARGMAX
+            
+        elif 0.3 <= score < 0.5:  # Moderate uncertainty
+            return SamplerState.SAMPLE if normalized_metrics["logits_varentropy"] > 0.5 else SamplerState.ARGMAX
+            
+        elif 0.5 <= score < 0.7:  # High uncertainty
+            # Check for CoT insertion
+            if (normalized_metrics["logits_entropy"] > 0.6 and 
+                normalized_metrics["attn_entropy"] > 0.6 and
+                self.config.cot_token not in self.recent_tokens):
+                return SamplerState.INSERT_COT
+                
+            return SamplerState.ADAPTIVE
+            
+        else:  # Very high uncertainty
+            if normalized_metrics["logits_varentropy"] > 0.7 and normalized_metrics["attn_varentropy"] > 0.7:
+                return SamplerState.RESAMPLE
+            return SamplerState.ADAPTIVE
+
+    def calculate_strategy_confidence(self, metrics: Dict[str, float], weights: Dict[str, float]) -> Dict[str, float]:
+        """
+        Calculate confidence scores for each strategy based on weighted metrics.
+        
+        Args:
+            metrics (Dict[str, float]): Current normalized metrics
+            weights (Dict[str, float]): Weight factors for metrics
+            
+        Returns:
+            Dict[str, float]: Confidence score for each strategy
+        """
+        weighted_score = self.calculate_weighted_score(metrics, weights)
+        
+        # Calculate base confidences from weighted score
+        confidences = {
+            SamplerState.ARGMAX.name: max(0, 0.3 - weighted_score) / 0.3,
+            SamplerState.SAMPLE.name: max(0, min(weighted_score - 0.3, 0.2)) / 0.2,
+            SamplerState.ADAPTIVE.name: max(0, min(weighted_score - 0.5, 0.2)) / 0.2,
+            SamplerState.INSERT_COT.name: max(0, min(weighted_score - 0.5, 0.2)) / 0.2 
+                                        if metrics["logits_entropy"] > 0.6 and metrics["attn_entropy"] > 0.6 else 0,
+            SamplerState.RESAMPLE.name: max(0, weighted_score - 0.7) / 0.3 
+                                    if metrics["logits_varentropy"] > 0.7 and metrics["attn_varentropy"] > 0.7 else 0
+        }
+        
+        # Normalize confidences to sum to 1
+        total = sum(confidences.values())
+        if total > 0:
+            confidences = {k: v/total for k, v in confidences.items()}
+            
+        return confidences
 
 def generate_response(model, tokenizer, prompt: str, max_tokens: int = 1000) -> str:
     """Generate response using the enhanced sampling strategy with fixed dimension handling"""
