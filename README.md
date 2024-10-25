@@ -2,9 +2,6 @@
 torch + transformers based
 
 
-see wav file for audio description (NotebookLM)
-
-
 To use this implementation:
 
 Ensure you have the necessary dependencies installed:
