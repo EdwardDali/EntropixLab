@@ -180,23 +180,39 @@ class SamplerConfig:
         self.n_heads = self._validate_int("n_heads", 32, min_val=1)
         self.head_dim = self._validate_int("head_dim", 64, min_val=1)
 
-        # Strategy-specific thresholds
-        self.argmax_entropy_thresh = self._validate_float("argmax_entropy_thresh", 0.1, min_val=0.0)
+        # Strategy-specific thresholds with expanded ranges
+        self.argmax_entropy_thresh = self._validate_float("argmax_entropy_thresh", 0.5, min_val=0.0, max_val=5.0)
         
-        self.sample_min_entropy_thresh = self._validate_float("sample_min_entropy_thresh", 0.1, min_val=0.0)
-        self.sample_max_entropy_thresh = self._validate_float("sample_max_entropy_thresh", 1.8, min_val=0.0)
-        self.sample_varentropy_thresh = self._validate_float("sample_varentropy_thresh", 0.1, min_val=0.0)
+        self.sample_min_entropy_thresh = self._validate_float("sample_min_entropy_thresh", 0.5, min_val=0.0, max_val=5.0)
+        self.sample_max_entropy_thresh = self._validate_float("sample_max_entropy_thresh", 1.5, min_val=0.0, max_val=7.0)
+        self.sample_varentropy_thresh = self._validate_float("sample_varentropy_thresh", 2.0, min_val=0.0, max_val=8.0)
         
-        self.cot_min_entropy_thresh = self._validate_float("cot_min_entropy_thresh", 1.8, min_val=0.0)
-        self.cot_max_entropy_thresh = self._validate_float("cot_max_entropy_thresh", 2.5, min_val=0.0)
-        self.cot_varentropy_thresh = self._validate_float("cot_varentropy_thresh", 0.1, min_val=0.0)
+        self.cot_min_entropy_thresh = self._validate_float("cot_min_entropy_thresh", 1.5, min_val=0.0, max_val=6.0)
+        self.cot_max_entropy_thresh = self._validate_float("cot_max_entropy_thresh", 2.5, min_val=0.0, max_val=8.0)
+        self.cot_varentropy_thresh = self._validate_float("cot_varentropy_thresh", 2.0, min_val=0.0, max_val=8.0)
         
-        self.resample_min_entropy_thresh = self._validate_float("resample_min_entropy_thresh", 0.5, min_val=0.0)
-        self.resample_max_entropy_thresh = self._validate_float("resample_max_entropy_thresh", 2.0, min_val=0.0)
-        self.resample_varentropy_thresh = self._validate_float("resample_varentropy_thresh", 3.0, min_val=0.0)
+        self.resample_min_entropy_thresh = self._validate_float("resample_min_entropy_thresh", 1.0, min_val=0.0, max_val=6.0)
+        self.resample_max_entropy_thresh = self._validate_float("resample_max_entropy_thresh", 2.5, min_val=0.0, max_val=8.0)
+        self.resample_varentropy_thresh = self._validate_float("resample_varentropy_thresh", 4.0, min_val=0.0, max_val=10.0)
         
-        self.adaptive_entropy_thresh = self._validate_float("adaptive_entropy_thresh", 2.5, min_val=0.0)
-        self.adaptive_varentropy_thresh = self._validate_float("adaptive_varentropy_thresh", 3.0, min_val=0.0)
+        self.adaptive_entropy_thresh = self._validate_float("adaptive_entropy_thresh", 2.0, min_val=0.0, max_val=8.0)
+        self.adaptive_varentropy_thresh = self._validate_float("adaptive_varentropy_thresh", 4.0, min_val=0.0, max_val=10.0)
+
+        # Adaptive center point parameters with expanded ranges
+        self.adaptive_entropy_center = self._validate_float("adaptive_entropy_center", 2.0, min_val=0.0, max_val=8.0)
+        self.adaptive_varentropy_center = self._validate_float("adaptive_varentropy_center", 2.0, min_val=0.0, max_val=10.0)
+        self.adaptive_radius = self._validate_float("adaptive_radius", 0.5, min_val=0.1, max_val=4.0)
+
+        # Strategy positioning parameters with expanded ranges
+        self.quadrant_separation = self._validate_float("quadrant_separation", 1.0, min_val=0.5, max_val=4.0)
+        self.boundary_softness = self._validate_float("boundary_softness", 0.3, min_val=0.1, max_val=2.0)
+        
+        # Strategy-specific parameters with expanded ranges
+        self.argmax_range = self._validate_float("argmax_range", 0.3, min_val=0.1, max_val=3.0)
+        self.sample_variance_threshold = self._validate_float("sample_variance_threshold", 0.5, min_val=0.1, max_val=5.0)
+        self.cot_entropy_range = self._validate_float("cot_entropy_range", 0.8, min_val=0.1, max_val=5.0)
+        self.resample_min_variance = self._validate_float("resample_min_variance", 1.0, min_val=0.5, max_val=6.0)
+
 
         # Enhanced RoPE parameters
         self.max_seq_len = self._validate_int("max_seq_len", 4096, min_val=1)
@@ -513,53 +529,66 @@ class EntropixSampler:
    
 
     def determine_strategy(self, entropy: float, varentropy: float, attention_entropy: float) -> SamplerState:
-        """Enhanced strategy determination using configurable thresholds"""
+        """Enhanced strategy determination using configurable relative positioning"""
         recent_tokens = list(self.recent_tokens)[-1:] if self.recent_tokens else []
         if recent_tokens and self.config.stop_tokens and any(token in self.config.stop_tokens for token in recent_tokens):
             return SamplerState.EOT
 
-        # Log current values and thresholds for debugging
-        logger.debug(f"\nCurrent Values:")
-        logger.debug(f"Entropy: {entropy:.4f}")
-        logger.debug(f"Varentropy: {varentropy:.4f}")
-        logger.debug(f"Attention Entropy: {attention_entropy:.4f}")
+        # Calculate distances from adaptive center
+        entropy_dist = entropy - self.config.adaptive_entropy_center
+        varentropy_dist = varentropy - self.config.adaptive_varentropy_center
+        distance_from_center = math.sqrt(entropy_dist**2 + varentropy_dist**2)
 
-        # Check for ARGMAX strategy (low entropy, low variance)
-        if entropy < self.config.argmax_entropy_thresh and varentropy < self.config.sample_varentropy_thresh:
-            logger.debug("ARGMAX triggered (low entropy, low variance)")
-            return SamplerState.ARGMAX
-
-        # Check for INSERT_COT strategy (high entropy, low variance)
-        if (self.config.cot_min_entropy_thresh <= entropy <= self.config.cot_max_entropy_thresh and 
-            varentropy < self.config.cot_varentropy_thresh):
-            logger.debug("INSERT_COT triggered (high entropy, low variance)")
-            return SamplerState.INSERT_COT
-
-        # Check for RESAMPLE strategy (high entropy, high variance)
-        if (entropy >= self.config.resample_min_entropy_thresh and 
-            varentropy >= self.config.resample_varentropy_thresh):
-            logger.debug("RESAMPLE triggered (high entropy, high variance)")
-            return SamplerState.RESAMPLE
-
-        # Check for SAMPLE strategy (low entropy, high variance)
-        if (entropy <= self.config.sample_max_entropy_thresh and 
-            varentropy >= self.config.sample_varentropy_thresh):
-            logger.debug("SAMPLE triggered (low entropy, high variance)")
-            return SamplerState.SAMPLE
-
-        # Check for ADAPTIVE strategy (near center point)
-        center_distance = math.sqrt(
-            (entropy - self.config.adaptive_entropy_thresh) ** 2 + 
-            (varentropy - self.config.adaptive_varentropy_thresh) ** 2
-        )
-        
-        if center_distance < 1.5:  # Using adaptive radius for center zone
-            logger.debug("ADAPTIVE triggered (central position)")
+        # Check if we're in the adaptive region
+        if distance_from_center <= self.config.adaptive_radius:
+            logger.debug("ADAPTIVE triggered (within center radius)")
             return SamplerState.ADAPTIVE
 
-        # Default to SAMPLE if no other strategy matches
-        logger.debug("SAMPLE triggered (default)")
-        return SamplerState.SAMPLE
+        # Calculate normalized position relative to center
+        angle = math.atan2(varentropy_dist, entropy_dist)
+        quadrant = (math.degrees(angle) + 360) % 360 // 90
+
+        # Apply quadrant separation scaling
+        scaled_distance = distance_from_center * self.config.quadrant_separation
+
+        # Calculate strategy weights based on position and boundary softness
+        weights = {
+            SamplerState.ARGMAX: 0.0,
+            SamplerState.SAMPLE: 0.0,
+            SamplerState.INSERT_COT: 0.0,
+            SamplerState.RESAMPLE: 0.0
+        }
+
+        # ARGMAX (bottom-left quadrant)
+        if entropy < self.config.adaptive_entropy_center and varentropy < self.config.adaptive_varentropy_center:
+            argmax_weight = math.exp(-scaled_distance / self.config.argmax_range)
+            weights[SamplerState.ARGMAX] = argmax_weight
+
+        # SAMPLE (bottom-right quadrant)
+        if varentropy >= self.config.sample_variance_threshold:
+            sample_weight = 1.0 - math.exp(-varentropy / self.config.sample_variance_threshold)
+            weights[SamplerState.SAMPLE] = sample_weight
+
+        # INSERT_COT (top-left quadrant)
+        if abs(entropy - (self.config.adaptive_entropy_center + self.config.cot_entropy_range)) < self.config.boundary_softness:
+            cot_weight = math.exp(-abs(entropy - (self.config.adaptive_entropy_center + self.config.cot_entropy_range)) / self.config.boundary_softness)
+            weights[SamplerState.INSERT_COT] = cot_weight
+
+        # RESAMPLE (top-right quadrant)
+        if varentropy >= self.config.resample_min_variance:
+            resample_weight = 1.0 - math.exp(-(varentropy - self.config.resample_min_variance))
+            weights[SamplerState.RESAMPLE] = resample_weight
+
+        # Apply boundary softness to all weights
+        weights = {k: v * math.exp(-scaled_distance * (1 - self.config.boundary_softness)) for k, v in weights.items()}
+
+        # Choose strategy with highest weight
+        selected_strategy = max(weights.items(), key=lambda x: x[1])[0]
+        
+        logger.debug(f"Strategy weights: {weights}")
+        logger.debug(f"Selected strategy: {selected_strategy}")
+        
+        return selected_strategy
 
     def score_sample(self, sample: torch.Tensor, logits: torch.Tensor, metrics: Dict[str, float]) -> float:
         """

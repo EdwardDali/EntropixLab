@@ -271,19 +271,38 @@ class ParameterValidator:
             "repetition_penalty": {"min": 1.0, "max": 2.0, "default": 1.2},
             "strategy_change_batch_size": {"min": 1, "max": 10, "default": 1},
             
-            # Strategy thresholds
-            "argmax_entropy_thresh": {"min": 0.0, "max": 2.0, "default": 0.1},
-            "sample_min_entropy_thresh": {"min": 0.0, "max": 2.0, "default": 0.1},
-            "sample_max_entropy_thresh": {"min": 0.0, "max": 3.0, "default": 1.8},
-            "sample_varentropy_thresh": {"min": 0.0, "max": 3.0, "default": 0.1},
-            "cot_min_entropy_thresh": {"min": 0.0, "max": 3.0, "default": 1.8},
-            "cot_max_entropy_thresh": {"min": 0.0, "max": 4.0, "default": 2.5},
-            "cot_varentropy_thresh": {"min": 0.0, "max": 3.0, "default": 0.1},
-            "resample_min_entropy_thresh": {"min": 0.0, "max": 3.0, "default": 0.5},
-            "resample_max_entropy_thresh": {"min": 0.0, "max": 4.0, "default": 2.0},
-            "resample_varentropy_thresh": {"min": 0.0, "max": 5.0, "default": 3.0},
-            "adaptive_entropy_thresh": {"min": 0.0, "max": 4.0, "default": 2.5},
-            "adaptive_varentropy_thresh": {"min": 0.0, "max": 5.0, "default": 3.0},
+                       # Strategy thresholds with expanded ranges
+            "argmax_entropy_thresh": {"min": 0.0, "max": 5.0, "default": 0.5},
+            
+            "sample_min_entropy_thresh": {"min": 0.0, "max": 5.0, "default": 0.5},
+            "sample_max_entropy_thresh": {"min": 0.0, "max": 7.0, "default": 1.5},
+            "sample_varentropy_thresh": {"min": 0.0, "max": 8.0, "default": 2.0},
+            
+            "cot_min_entropy_thresh": {"min": 0.0, "max": 6.0, "default": 1.5},
+            "cot_max_entropy_thresh": {"min": 0.0, "max": 8.0, "default": 2.5},
+            "cot_varentropy_thresh": {"min": 0.0, "max": 8.0, "default": 2.0},
+            
+            "resample_min_entropy_thresh": {"min": 0.0, "max": 6.0, "default": 1.0},
+            "resample_max_entropy_thresh": {"min": 0.0, "max": 8.0, "default": 2.5},
+            "resample_varentropy_thresh": {"min": 0.0, "max": 10.0, "default": 4.0},
+            
+            "adaptive_entropy_thresh": {"min": 0.0, "max": 8.0, "default": 2.0},
+            "adaptive_varentropy_thresh": {"min": 0.0, "max": 10.0, "default": 4.0},
+
+            # Adaptive center point parameters with expanded ranges
+            "adaptive_entropy_center": {"min": 0.0, "max": 8.0, "default": 2.0},
+            "adaptive_varentropy_center": {"min": 0.0, "max": 10.0, "default": 2.0},
+            "adaptive_radius": {"min": 0.1, "max": 4.0, "default": 0.5},
+
+            # Strategy positioning parameters with expanded ranges
+            "quadrant_separation": {"min": 0.5, "max": 4.0, "default": 1.0},
+            "boundary_softness": {"min": 0.1, "max": 2.0, "default": 0.3},
+            
+            # Strategy-specific parameters with expanded ranges
+            "argmax_range": {"min": 0.1, "max": 3.0, "default": 0.3},
+            "sample_variance_threshold": {"min": 0.1, "max": 5.0, "default": 0.5},
+            "cot_entropy_range": {"min": 0.1, "max": 5.0, "default": 0.8},
+            "resample_min_variance": {"min": 0.5, "max": 6.0, "default": 1.0},
 
             # RoPE parameters
             "rope_theta": {"min": 1000.0, "max": 100000.0, "default": 10000.0},
@@ -791,21 +810,44 @@ class EntropixTGUI:
         self.top_k_var = tk.IntVar(value=27)
         self.min_p_var = tk.DoubleVar(value=0.05)
         self.repetition_penalty_var = tk.DoubleVar(value=1.2)
+        self.strategy_change_batch_size_var = tk.IntVar(value=1)
 
-        # Entropy thresholds
-        self.low_ent_thresh_var = tk.DoubleVar(value=0.1)
-        self.med_ent_thresh_var = tk.DoubleVar(value=1.8)
-        self.high_ent_thresh_var = tk.DoubleVar(value=2.5)
-        self.high_vent_thresh_var = tk.DoubleVar(value=3.0)
-        self.varentropy_threshold_var = tk.DoubleVar(value=0.1)
+        # Adaptive sampling parameters that were missing
+        self.n_adaptive_samples_var = tk.IntVar(value=5)
+        self.ada_temp_logits_var = tk.DoubleVar(value=0.3)
+        self.ada_temp_attn_var = tk.DoubleVar(value=0.2)
+        self.ada_temp_agree_var = tk.DoubleVar(value=0.2)
+        self.ada_top_p_var = tk.DoubleVar(value=0.1)
+        self.ada_top_k_int_var = tk.DoubleVar(value=0.3)
+        self.ada_top_k_agree_var = tk.DoubleVar(value=0.2)
+        self.ada_min_p_var = tk.DoubleVar(value=0.5)
 
-        # Adaptive sampling coefficients
-        self.ada_temp_logits_var = tk.DoubleVar(value=0.2)
-        self.ada_temp_attn_var = tk.DoubleVar(value=0.3)
-        self.ada_temp_agree_var = tk.DoubleVar(value=0.1)
-        self.n_adaptive_samples_var = tk.IntVar(value=3)
+        # Make sure all existing entropy vars are here
+        self.argmax_entropy_thresh_var = tk.DoubleVar(value=0.5)
+        self.sample_min_entropy_thresh_var = tk.DoubleVar(value=0.5)
+        self.sample_max_entropy_thresh_var = tk.DoubleVar(value=1.5)
+        self.sample_varentropy_thresh_var = tk.DoubleVar(value=2.0)
+        self.cot_min_entropy_thresh_var = tk.DoubleVar(value=1.5)
+        self.cot_max_entropy_thresh_var = tk.DoubleVar(value=2.5)
+        self.cot_varentropy_thresh_var = tk.DoubleVar(value=2.0)
+        self.resample_min_entropy_thresh_var = tk.DoubleVar(value=1.0)
+        self.resample_max_entropy_thresh_var = tk.DoubleVar(value=2.5)
+        self.resample_varentropy_thresh_var = tk.DoubleVar(value=4.0)
+        self.adaptive_entropy_thresh_var = tk.DoubleVar(value=2.0)
+        self.adaptive_varentropy_thresh_var = tk.DoubleVar(value=4.0)
 
-        # Add new adaptive scoring parameters
+        # Strategy positioning parameters
+        self.adaptive_entropy_center_var = tk.DoubleVar(value=2.0)
+        self.adaptive_varentropy_center_var = tk.DoubleVar(value=2.0)
+        self.adaptive_radius_var = tk.DoubleVar(value=0.5)
+        self.quadrant_separation_var = tk.DoubleVar(value=1.0)
+        self.boundary_softness_var = tk.DoubleVar(value=0.3)
+        self.argmax_range_var = tk.DoubleVar(value=0.3)
+        self.sample_variance_threshold_var = tk.DoubleVar(value=0.5)
+        self.cot_entropy_range_var = tk.DoubleVar(value=0.8)
+        self.resample_min_variance_var = tk.DoubleVar(value=1.0)
+
+        # Adaptive scoring parameters
         self.ada_score_logits_ent_var = tk.DoubleVar(value=0.1)
         self.ada_score_attn_ent_var = tk.DoubleVar(value=0.2)
         self.ada_score_logits_vent_var = tk.DoubleVar(value=0.3)
@@ -835,42 +877,6 @@ class EntropixTGUI:
         self.long_window_size_var = tk.IntVar(value=500)
         self.decay_factor_var = tk.DoubleVar(value=0.95)
         self.long_decay_factor_var = tk.DoubleVar(value=0.95)
-
-        # Add to initialize_parameter_vars
-        self.strategy_change_batch_size_var = tk.IntVar(value=1)
-
-         # Strategy-specific thresholds adjusted for observed entropy ranges
-        self.argmax_entropy_thresh_var = tk.DoubleVar(value=0.5)
-        
-        self.sample_min_entropy_thresh_var = tk.DoubleVar(value=0.5)
-        self.sample_max_entropy_thresh_var = tk.DoubleVar(value=1.5)
-        self.sample_varentropy_thresh_var = tk.DoubleVar(value=2.0)  # Increased for observed values
-        
-        self.cot_min_entropy_thresh_var = tk.DoubleVar(value=1.5)
-        self.cot_max_entropy_thresh_var = tk.DoubleVar(value=2.5)
-        self.cot_varentropy_thresh_var = tk.DoubleVar(value=2.0)  # Increased for observed values
-        
-        self.resample_min_entropy_thresh_var = tk.DoubleVar(value=1.0)
-        self.resample_max_entropy_thresh_var = tk.DoubleVar(value=2.5)
-        self.resample_varentropy_thresh_var = tk.DoubleVar(value=4.0)  # Adjusted for high varentropy
-        
-        self.adaptive_entropy_thresh_var = tk.DoubleVar(value=2.0)
-        self.adaptive_varentropy_thresh_var = tk.DoubleVar(value=4.0)  # Adjusted for high varentropy
-
-            # Adaptive center point parameters
-        self.adaptive_entropy_center_var = tk.DoubleVar(value=2.0)
-        self.adaptive_varentropy_center_var = tk.DoubleVar(value=2.0)
-        self.adaptive_radius_var = tk.DoubleVar(value=0.5)
-
-        # Strategy positioning parameters
-        self.quadrant_separation_var = tk.DoubleVar(value=1.0)
-        self.boundary_softness_var = tk.DoubleVar(value=0.3)
-
-        # Strategy-specific parameters
-        self.argmax_range_var = tk.DoubleVar(value=0.3)
-        self.sample_variance_threshold_var = tk.DoubleVar(value=0.5)
-        self.cot_entropy_range_var = tk.DoubleVar(value=0.8)
-        self.resample_min_variance_var = tk.DoubleVar(value=1.0)
 
     def create_parameter_controls(self, parent):
         """Create organized parameter controls with additional tab"""
@@ -1304,16 +1310,6 @@ class EntropixTGUI:
             logger.error(f"Error loading configuration: {str(e)}")
 
     def update_config(self):
-        """Update sampler config from GUI values and save"""
-        if self.sampler_config:
-            # Update sampler config with current GUI values
-            # ... (existing update code) ...
-            
-            # Automatically save the configuration
-            self.save_model_config()
-
-
-    def update_config(self):
         """Update sampler config from GUI values"""
         if not self.sampler_config:
             logger.warning("No sampler config initialized")
@@ -1341,6 +1337,19 @@ class EntropixTGUI:
             self.sampler_config.resample_varentropy_thresh = self.resample_varentropy_thresh_var.get()
             self.sampler_config.adaptive_entropy_thresh = self.adaptive_entropy_thresh_var.get()
             self.sampler_config.adaptive_varentropy_thresh = self.adaptive_varentropy_thresh_var.get()
+
+            # Adaptive center point parameters
+            self.sampler_config.adaptive_entropy_center = self.adaptive_entropy_center_var.get()
+            self.sampler_config.adaptive_varentropy_center = self.adaptive_varentropy_center_var.get()
+            self.sampler_config.adaptive_radius = self.adaptive_radius_var.get()
+
+            # Strategy positioning parameters
+            self.sampler_config.quadrant_separation = self.quadrant_separation_var.get()
+            self.sampler_config.boundary_softness = self.boundary_softness_var.get()
+            self.sampler_config.argmax_range = self.argmax_range_var.get()
+            self.sampler_config.sample_variance_threshold = self.sample_variance_threshold_var.get()
+            self.sampler_config.cot_entropy_range = self.cot_entropy_range_var.get()
+            self.sampler_config.resample_min_variance = self.resample_min_variance_var.get()
 
             # RoPE parameters
             self.sampler_config.rope_theta = self.rope_theta_var.get()
@@ -1378,7 +1387,7 @@ class EntropixTGUI:
             self.sampler_config.ada_score_int = self.ada_score_int_var.get()
 
             logger.debug("Successfully updated sampler configuration")
-            
+                
         except Exception as e:
             logger.error(f"Error updating config: {str(e)}")
 
@@ -1579,130 +1588,119 @@ class EntropixTGUI:
         return frame
 
     def create_entropy_controls(self, parent):
-        """Create entropy threshold controls with tripled ranges"""
+        """Create entropy threshold controls based on adaptive center point"""
         # Create main container frame
         main_container = ttk.Frame(parent)
         main_container.pack(fill="both", expand=True, padx=5, pady=5)
         main_container.grid_columnconfigure(0, weight=1)
         
-        # Adaptive Center Point Configuration - Tripled ranges
+        # Add quadrant explanation label
+        explanation = ttk.Label(main_container, text="""
+        Strategy Selection:
+        Adaptive strategy forms the center point, with other strategies
+        positioned relative to it in the entropy-varentropy space.
+        
+        Quadrant Positions (relative to center):
+        - Top-Left: INSERT_COT (Higher entropy, Lower variance)
+        - Top-Right: RESAMPLE (Higher entropy, Higher variance)
+        - Bottom-Left: ARGMAX (Lower entropy, Lower variance)
+        - Bottom-Right: SAMPLE (Lower entropy, Higher variance)
+        """, justify="left")
+        explanation.pack(fill="x", pady=10)
+
+        # Adaptive Center Point Configuration
         adaptive_group = ttk.LabelFrame(main_container, text="Adaptive Strategy (Center Point)", padding=5)
         adaptive_group.pack(fill="x", pady=5)
         
         self.create_slider_with_tooltip(
-            adaptive_group, "Center Entropy", self.adaptive_entropy_center_var, 0.0, 12.0,  # Tripled from 4.0
+            adaptive_group, "Center Entropy", self.adaptive_entropy_center_var, 0.0, 8.0,
             "Base entropy value for the center point of the adaptive strategy"
         )
         self.create_slider_with_tooltip(
-            adaptive_group, "Center Varentropy", self.adaptive_varentropy_center_var, 0.0, 12.0,  # Tripled from 4.0
+            adaptive_group, "Center Varentropy", self.adaptive_varentropy_center_var, 0.0, 10.0,
             "Base variance entropy value for the center point of the adaptive strategy"
         )
         self.create_slider_with_tooltip(
-            adaptive_group, "Radius", self.adaptive_radius_var, 0.3, 6.0,  # Tripled from 0.1-2.0
+            adaptive_group, "Radius", self.adaptive_radius_var, 0.1, 4.0,
             "Radius of the adaptive strategy region"
         )
 
-        # Strategy Offset Configuration - Tripled ranges
+        # Strategy Offset Configuration
         offset_group = ttk.LabelFrame(main_container, text="Strategy Offsets", padding=5)
         offset_group.pack(fill="x", pady=5)
         
         self.create_slider_with_tooltip(
-            offset_group, "Quadrant Separation", self.quadrant_separation_var, 1.5, 6.0,  # Tripled from 0.5-2.0
+            offset_group, "Quadrant Separation", self.quadrant_separation_var, 0.5, 4.0,
             "Distance between quadrants relative to center point"
         )
         self.create_slider_with_tooltip(
-            offset_group, "Strategy Boundary Softness", self.boundary_softness_var, 0.3, 3.0,  # Tripled from 0.1-1.0
+            offset_group, "Strategy Boundary Softness", self.boundary_softness_var, 0.1, 2.0,
             "Softness of boundaries between strategy regions"
         )
 
-        # Strategy-specific adjustments - Tripled ranges
+        # Strategy-specific adjustments
         strategies_group = ttk.LabelFrame(main_container, text="Strategy-Specific Adjustments", padding=5)
         strategies_group.pack(fill="x", pady=5)
         
         self.create_slider_with_tooltip(
-            strategies_group, "ARGMAX Range", self.argmax_range_var, 0.3, 3.0,  # Tripled from 0.1-1.0
+            strategies_group, "ARGMAX Range", self.argmax_range_var, 0.1, 3.0,
             "Range of influence for ARGMAX strategy"
         )
         self.create_slider_with_tooltip(
-            strategies_group, "SAMPLE Variance Threshold", self.sample_variance_threshold_var, 0.3, 6.0,  # Tripled from 0.1-2.0
+            strategies_group, "SAMPLE Variance Threshold", self.sample_variance_threshold_var, 0.1, 5.0,
             "Minimum variance required for SAMPLE strategy"
         )
         self.create_slider_with_tooltip(
-            strategies_group, "COT Entropy Range", self.cot_entropy_range_var, 0.3, 6.0,  # Tripled from 0.1-2.0
+            strategies_group, "COT Entropy Range", self.cot_entropy_range_var, 0.1, 5.0,
             "Entropy range for INSERT_COT strategy"
         )
         self.create_slider_with_tooltip(
-            strategies_group, "RESAMPLE Minimum Variance", self.resample_min_variance_var, 1.5, 6.0,  # Tripled from 0.5-2.0
+            strategies_group, "RESAMPLE Minimum Variance", self.resample_min_variance_var, 0.5, 6.0,
             "Minimum variance required for RESAMPLE strategy"
-        )
-
-        # Additional Strategy Thresholds - Tripled ranges
-        thresholds_group = ttk.LabelFrame(main_container, text="Strategy Thresholds", padding=5)
-        thresholds_group.pack(fill="x", pady=5)
-        
-        self.create_slider_with_tooltip(
-            thresholds_group, "ARGMAX Entropy Threshold", self.argmax_entropy_thresh_var, 0.0, 4.5,  # Tripled
-            "Maximum entropy threshold for ARGMAX strategy"
-        )
-        
-        self.create_slider_with_tooltip(
-            thresholds_group, "SAMPLE Min Entropy", self.sample_min_entropy_thresh_var, 0.0, 4.5,  # Tripled
-            "Minimum entropy threshold for SAMPLE strategy"
-        )
-        self.create_slider_with_tooltip(
-            thresholds_group, "SAMPLE Max Entropy", self.sample_max_entropy_thresh_var, 1.5, 7.5,  # Tripled
-            "Maximum entropy threshold for SAMPLE strategy"
-        )
-        
-        self.create_slider_with_tooltip(
-            thresholds_group, "COT Min Entropy", self.cot_min_entropy_thresh_var, 1.5, 7.5,  # Tripled
-            "Minimum entropy threshold for INSERT_COT strategy"
-        )
-        self.create_slider_with_tooltip(
-            thresholds_group, "COT Max Entropy", self.cot_max_entropy_thresh_var, 3.0, 12.0,  # Tripled
-            "Maximum entropy threshold for INSERT_COT strategy"
-        )
-        
-        self.create_slider_with_tooltip(
-            thresholds_group, "RESAMPLE Min Entropy", self.resample_min_entropy_thresh_var, 1.5, 9.0,  # Tripled
-            "Minimum entropy threshold for RESAMPLE strategy"
-        )
-        self.create_slider_with_tooltip(
-            thresholds_group, "RESAMPLE Max Entropy", self.resample_max_entropy_thresh_var, 3.0, 12.0,  # Tripled
-            "Maximum entropy threshold for RESAMPLE strategy"
         )
             
     def create_adaptive_controls(self, parent):
+        """Create adaptive sampling controls"""
         adaptive_group = ttk.LabelFrame(parent, text="Adaptive Parameters", padding=5)
         adaptive_group.pack(fill="x", padx=5, pady=5)
         
-        # Add new scoring coefficient controls
-        scoring_group = ttk.LabelFrame(adaptive_group, text="Scoring Coefficients", padding=5)
-        scoring_group.pack(fill="x", pady=5)
+        # Add basic adaptive controls
+        self.create_slider_with_tooltip(
+            adaptive_group, "Number of Samples", self.n_adaptive_samples_var, 1, 10,
+            "Number of samples to generate in adaptive mode"
+        )
+        self.create_slider_with_tooltip(
+            adaptive_group, "Temperature Logits", self.ada_temp_logits_var, 0.0, 1.0,
+            "Temperature adjustment based on logits uncertainty"
+        )
+        self.create_slider_with_tooltip(
+            adaptive_group, "Temperature Attention", self.ada_temp_attn_var, 0.0, 1.0,
+            "Temperature adjustment based on attention uncertainty"
+        )
+        self.create_slider_with_tooltip(
+            adaptive_group, "Temperature Agreement", self.ada_temp_agree_var, 0.0, 1.0,
+            "Temperature adjustment based on head agreement"
+        )
+        
+        # Add advanced adaptive controls
+        advanced_group = ttk.LabelFrame(adaptive_group, text="Advanced Adaptive Parameters", padding=5)
+        advanced_group.pack(fill="x", pady=5)
         
         self.create_slider_with_tooltip(
-            scoring_group, "Score Logits Entropy", self.ada_score_logits_ent_var, 0.0, 1.0,
-            "Weight for logits entropy in sample scoring"
+            advanced_group, "Top P", self.ada_top_p_var, 0.0, 1.0,
+            "Top-p sampling adjustment for adaptive mode"
         )
         self.create_slider_with_tooltip(
-            scoring_group, "Score Attn Entropy", self.ada_score_attn_ent_var, 0.0, 1.0,
-            "Weight for attention entropy in sample scoring"
+            advanced_group, "Top K Interaction", self.ada_top_k_int_var, 0.0, 1.0,
+            "Top-k adjustment based on interaction strength"
         )
         self.create_slider_with_tooltip(
-            scoring_group, "Score Logits Varentropy", self.ada_score_logits_vent_var, 0.0, 1.0,
-            "Weight for logits variance entropy in sample scoring"
+            advanced_group, "Top K Agreement", self.ada_top_k_agree_var, 0.0, 1.0,
+            "Top-k adjustment based on head agreement"
         )
         self.create_slider_with_tooltip(
-            scoring_group, "Score Attn Varentropy", self.ada_score_attn_vent_var, 0.0, 1.0,
-            "Weight for attention variance entropy in sample scoring"
-        )
-        self.create_slider_with_tooltip(
-            scoring_group, "Score Agreement", self.ada_score_agree_var, 0.0, 1.0,
-            "Weight for head agreement in sample scoring"
-        )
-        self.create_slider_with_tooltip(
-            scoring_group, "Score Interaction", self.ada_score_int_var, 0.0, 1.0,
-            "Weight for head interaction in sample scoring"
+            advanced_group, "Min P", self.ada_min_p_var, 0.0, 1.0,
+            "Minimum probability threshold for adaptive mode"
         )
 
     def create_attention_controls(self, parent):
