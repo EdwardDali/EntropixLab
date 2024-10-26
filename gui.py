@@ -975,7 +975,7 @@ class EntropixTGUI:
         self.update_model_list()
 
     def create_input_area(self, parent):
-        """Create the input area with buttons above the prompt textbox and auto-clear functionality"""
+        """Create the input area with buttons above the prompt textbox"""
         # Container frame for proper padding
         container = ttk.Frame(parent)
         container.pack(fill="both", expand=True, padx=5, pady=5)
@@ -990,7 +990,7 @@ class EntropixTGUI:
         ttk.Button(
             btn_frame,
             text="Generate",
-            command=self.generate_and_clear,  # Updated command
+            command=self.generate_and_clear,
             width=button_width
         ).pack(side="left", padx=(0, 5))
         
@@ -1008,6 +1008,13 @@ class EntropixTGUI:
             width=button_width
         ).pack(side="left", padx=5)
         
+        ttk.Button(
+            btn_frame,
+            text="Continue",
+            command=self.continue_generation,
+            width=button_width
+        ).pack(side="left", padx=5)
+        
         # Input text area below buttons
         self.prompt_input = scrolledtext.ScrolledText(container, height=4)
         self.prompt_input.pack(fill="x", expand=True)
@@ -1019,6 +1026,7 @@ class EntropixTGUI:
         
         self.prompt_input.bind("<Return>", on_enter)
         self.prompt_input.bind("<KP_Enter>", on_enter)
+
 
     def generate_and_clear(self):
         """Start generation with chat history and clear input text"""
@@ -1056,10 +1064,13 @@ class EntropixTGUI:
 
     def get_conversation_history(self):
         """Extract conversation history from output text"""
-        history = self.output_text.get("1.0", "end-1c")
+        # Get the actual content from the output area
+        history = self.output_text.get("1.0", "end-1c").strip()
+        # Remove any pause markers
+        history = history.replace("\n[Generation paused - Click Continue to resume]\n", "")
         # If this is the first interaction, no formatting needed
         if not history.strip():
-            return self.format_first_prompt(self.output_text.get("1.0", "end-1c"))
+            return self.format_first_prompt(history)
         return history
 
     def format_first_prompt(self, prompt):
@@ -1071,6 +1082,41 @@ class EntropixTGUI:
         self.output_text.delete("1.0", "end")
         self.strategy_counter.clear()
         self.update_stats({})  # Clear statistics
+
+    def continue_generation(self):
+        """Continue generation from current output text content"""
+        if not self.model or not self.tokenizer:
+            self.output_text.insert("end", "Please load a model first.\n")
+            return
+        
+        # Get the current content from the output area
+        current_text = self.output_text.get("1.0", "end-1c").strip()
+        if not current_text:
+            self.output_text.insert("end", "No text to continue from.\n")
+            return
+        
+        # Remove any previous pause markers
+        current_text = current_text.replace("\n[Generation paused - Click Continue to resume]\n", "")
+        
+        # Don't start if already generating
+        if self.generation_thread and self.generation_thread.is_alive():
+            return
+        
+        self.stop_generation = False
+        self.update_config()
+        
+        # Start generation from current text content, but don't redisplay the prompt
+        self.generation_thread = threading.Thread(
+            target=self.generate_text, 
+            args=(current_text, True)  # Add flag for continuation
+        )
+        self.generation_thread.start()
+        self.root.after(100, self.check_response_queue)
+
+    def stop_generation_request(self):
+        """Stop generation and add marker"""
+        self.stop_generation = True
+        self.output_text.insert("end", "\n[Generation paused - Click Continue to resume]\n")
 
     def create_output_areas(self, parent):
         """Create output and statistics areas with improved scrolling"""
@@ -1990,8 +2036,8 @@ class EntropixTGUI:
             # Disable text widget after updating
             self.strategy_stats.configure(state="disabled")
 
-    def generate_text(self, conversation_history: str):
-        """Generate text with conversation history while maintaining all original functionalities"""
+    def generate_text(self, conversation_history: str, is_continuation: bool = False):
+        """Generate text with conversation history and continuation support"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         generated_tokens = []
         current_stats = {}
@@ -2007,8 +2053,8 @@ class EntropixTGUI:
             
             attention_mask = torch.ones_like(input_ids)
             
-            # Add proper newlines in the first prompt display if this is a new conversation
-            if not "\nUser:" in conversation_history:
+            # Only show the initial prompt formatting if this is not a continuation
+            if not is_continuation and not "\nUser:" in conversation_history:
                 formatted_prompt = conversation_history.replace('\\n', '\n')
                 self.response_queue.put(("token", f"Prompt: {formatted_prompt}\n\nGenerated response:\n"))
             
