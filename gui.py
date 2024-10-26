@@ -446,21 +446,21 @@ class EntropixTGUI:
     
 
     def create_main_tab(self):
-        """Create main tab with model selection, input, and output areas"""
-        # Model frame
+        """Create main tab with model selection, output, and input areas in new order"""
+        # Model frame at the top
         model_frame = ttk.LabelFrame(self.main_tab, text="Model", padding="5")
         model_frame.pack(fill="x", padx=5, pady=5)
         self.create_model_selector()
         
-        # Input frame
-        input_frame = ttk.LabelFrame(self.main_tab, text="Input", padding="5")
-        input_frame.pack(fill="x", padx=5, pady=5)
-        self.create_input_area(input_frame)
-        
-        # Output frame
+        # Output frame in the middle
         output_frame = ttk.LabelFrame(self.main_tab, text="Output", padding="5")
         output_frame.pack(fill="both", expand=True, padx=5, pady=5)
         self.create_output_areas(output_frame)
+        
+        # Input frame at the bottom
+        input_frame = ttk.LabelFrame(self.main_tab, text="Input", padding="5")
+        input_frame.pack(fill="x", padx=5, pady=5)
+        self.create_input_area(input_frame)
 
     def create_controls_tab(self):
         """Create organized parameter controls in the Controls tab"""
@@ -975,18 +975,77 @@ class EntropixTGUI:
         self.update_model_list()
 
     def create_input_area(self, parent):
-        """Create the input area with prompt textbox"""
-        # Input text area with reduced height
-        self.prompt_input = scrolledtext.ScrolledText(parent, height=3)  # Reduced height
-        self.prompt_input.pack(fill="both", expand=True)
-
-        # Generation controls
-        btn_frame = ttk.Frame(parent)
-        btn_frame.pack(fill="x", pady=5)
+        """Create the input area with buttons above the prompt textbox and auto-clear functionality"""
+        # Container frame for proper padding
+        container = ttk.Frame(parent)
+        container.pack(fill="both", expand=True, padx=5, pady=5)
         
-        ttk.Button(btn_frame, text="Generate", command=self.start_generation).pack(side="left", padx=5)
-        ttk.Button(btn_frame, text="Stop", command=self.stop_generation_request).pack(side="left", padx=5)
-        ttk.Button(btn_frame, text="Clear", command=self.clear_output).pack(side="left", padx=5)
+        # Button frame first (above input)
+        btn_frame = ttk.Frame(container)
+        btn_frame.pack(fill="x", pady=(0, 5), anchor="w")
+        
+        # Create buttons with consistent sizing
+        button_width = 10
+        
+        ttk.Button(
+            btn_frame,
+            text="Generate",
+            command=self.generate_and_clear,  # Updated command
+            width=button_width
+        ).pack(side="left", padx=(0, 5))
+        
+        ttk.Button(
+            btn_frame,
+            text="Stop",
+            command=self.stop_generation_request,
+            width=button_width
+        ).pack(side="left", padx=5)
+        
+        ttk.Button(
+            btn_frame,
+            text="Clear",
+            command=self.clear_output,
+            width=button_width
+        ).pack(side="left", padx=5)
+        
+        # Input text area below buttons
+        self.prompt_input = scrolledtext.ScrolledText(container, height=4)
+        self.prompt_input.pack(fill="x", expand=True)
+        
+        # Bind Enter key to generate_and_clear
+        def on_enter(event):
+            self.generate_and_clear()
+            return "break"
+        
+        self.prompt_input.bind("<Return>", on_enter)
+        self.prompt_input.bind("<KP_Enter>", on_enter)
+
+    def generate_and_clear(self):
+        """Start generation and clear input text"""
+        if not self.model or not self.tokenizer:
+            self.output_text.insert("end", "Please load a model first.\n")
+            return
+            
+        prompt = self.prompt_input.get("1.0", "end-1c").strip()
+        if not prompt:
+            self.output_text.insert("end", "Please enter a prompt.\n")
+            return
+        
+        # Clear input text
+        self.prompt_input.delete("1.0", "end")
+        
+        # Start generation
+        if self.generation_thread and self.generation_thread.is_alive():
+            return
+                
+        self.stop_generation = False
+        self.strategy_counter.clear()
+        
+        self.update_config()
+        self.output_text.delete("1.0", "end")
+        self.generation_thread = threading.Thread(target=self.generate_text, args=(prompt,))
+        self.generation_thread.start()
+        self.root.after(100, self.check_response_queue)
 
     def create_output_areas(self, parent):
         """Create output and statistics areas with improved scrolling"""
@@ -1009,20 +1068,16 @@ class EntropixTGUI:
         self.output_text = scrolledtext.ScrolledText(
             output_frame,
             wrap=tk.WORD,
-            height=40,
+            height=30,  # Adjusted height to work better in middle position
             undo=True
         )
         self.output_text.grid(row=0, column=0, sticky="nsew")
-        
-        # Configure scrollbar style for better visibility
-        style = ttk.Style()
-        style.configure("Vertical.TScrollbar", arrowsize=13)
         
         # Right side: Statistics panel
         stats_frame = ttk.LabelFrame(container, text="Generation Statistics", padding=5)
         stats_frame.grid(row=0, column=1, sticky="nsew")
         
-        # Strategy Usage Section with scrolling
+        # Strategy Usage Section
         strategy_frame = ttk.LabelFrame(stats_frame, text="Strategy Usage", padding=5)
         strategy_frame.pack(fill="x", pady=(0, 10))
         
@@ -1040,6 +1095,7 @@ class EntropixTGUI:
         state_frame = ttk.LabelFrame(stats_frame, text="Current State", padding=5)
         state_frame.pack(fill="x", pady=(0, 10))
         
+        # Initialize statistics variables
         stats_vars = {
             "Entropy": "N/A",
             "Varentropy": "N/A",
