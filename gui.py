@@ -1021,13 +1021,14 @@ class EntropixTGUI:
         self.prompt_input.bind("<KP_Enter>", on_enter)
 
     def generate_and_clear(self):
-        """Start generation and clear input text"""
+        """Start generation with chat history and clear input text"""
         if not self.model or not self.tokenizer:
             self.output_text.insert("end", "Please load a model first.\n")
             return
             
-        prompt = self.prompt_input.get("1.0", "end-1c").strip()
-        if not prompt:
+        # Get new prompt
+        new_prompt = self.prompt_input.get("1.0", "end-1c").strip()
+        if not new_prompt:
             self.output_text.insert("end", "Please enter a prompt.\n")
             return
         
@@ -1041,11 +1042,35 @@ class EntropixTGUI:
         self.stop_generation = False
         self.strategy_counter.clear()
         
+        # Don't clear previous output - append new interaction
+        self.output_text.insert("end", "\n\nUser: " + new_prompt + "\nAssistant: ")
+        self.output_text.see("end")
+        
+        # Get full conversation history
+        full_history = self.get_conversation_history()
+        
         self.update_config()
-        self.output_text.delete("1.0", "end")
-        self.generation_thread = threading.Thread(target=self.generate_text, args=(prompt,))
+        self.generation_thread = threading.Thread(target=self.generate_text, args=(full_history,))
         self.generation_thread.start()
         self.root.after(100, self.check_response_queue)
+
+    def get_conversation_history(self):
+        """Extract conversation history from output text"""
+        history = self.output_text.get("1.0", "end-1c")
+        # If this is the first interaction, no formatting needed
+        if not history.strip():
+            return self.format_first_prompt(self.output_text.get("1.0", "end-1c"))
+        return history
+
+    def format_first_prompt(self, prompt):
+        """Format the first prompt in chat style"""
+        return f"User: {prompt}\nAssistant:"
+
+    def clear_output(self):
+        """Clear output and reset conversation"""
+        self.output_text.delete("1.0", "end")
+        self.strategy_counter.clear()
+        self.update_stats({})  # Clear statistics
 
     def create_output_areas(self, parent):
         """Create output and statistics areas with improved scrolling"""
@@ -1965,16 +1990,16 @@ class EntropixTGUI:
             # Disable text widget after updating
             self.strategy_stats.configure(state="disabled")
 
-    def generate_text(self, prompt: str):
-        """Generate text with proper error handling and output saving"""
+    def generate_text(self, conversation_history: str):
+        """Generate text with conversation history while maintaining all original functionalities"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         generated_tokens = []
         current_stats = {}
         
         try:
-            # Encode input with proper truncation
+            # Encode full conversation history with proper truncation
             input_ids = self.tokenizer.encode(
-                prompt,
+                conversation_history,
                 return_tensors="pt",
                 truncation=True,
                 max_length=self.model.config.max_position_embeddings - 1000
@@ -1982,14 +2007,15 @@ class EntropixTGUI:
             
             attention_mask = torch.ones_like(input_ids)
             
-            # Add proper newlines in the prompt display
-            formatted_prompt = prompt.replace('\\n', '\n')
-            self.response_queue.put(("token", f"Prompt: {formatted_prompt}\n\nGenerated response:\n"))
+            # Add proper newlines in the first prompt display if this is a new conversation
+            if not "\nUser:" in conversation_history:
+                formatted_prompt = conversation_history.replace('\\n', '\n')
+                self.response_queue.put(("token", f"Prompt: {formatted_prompt}\n\nGenerated response:\n"))
             
             sampler = EntropixSampler(self.sampler_config)
             
             with torch.inference_mode():
-                for _ in range(1000):  # Max tokens
+                for _ in range(1000):  # Max tokens per response
                     if self.stop_generation:
                         break
                     
@@ -2008,8 +2034,7 @@ class EntropixTGUI:
                         current_stats['current_strategy'] = state.name
                         self.response_queue.put(("stats", current_stats))
                         
-                        # Only send strategy update if we're actually using that strategy
-                        # For INSERT_COT, this means we actually inserted the token
+                        # Strategy tracking
                         if state == SamplerState.INSERT_COT:
                             if sampled_token[0] == self.sampler_config.cot_token:
                                 self.response_queue.put(("strategy", state.name))
@@ -2019,18 +2044,23 @@ class EntropixTGUI:
                     except Exception as sampling_error:
                         self.response_queue.put(("error", f"Sampling error: {str(sampling_error)}"))
                         break
-                    
+
+                    # Check for end of response conditions
                     if state == SamplerState.EOT or sampled_token[0] == self.tokenizer.eos_token_id:
                         self.response_queue.put(("token", "\n[End of Text]\n"))
                         generated_tokens.append("[End of Text]")
                         break
                     
+                    # Handle token generation
                     if state == SamplerState.INSERT_COT and sampled_token[0] == self.sampler_config.cot_token:
                         next_token_text = "[...]"
                         self.response_queue.put(("token", f"\n{next_token_text}\n"))
                         generated_tokens.append(next_token_text)
                     else:
                         next_token_text = self.tokenizer.decode(sampled_token[0])
+                        # Check for conversation boundary - stop if model tries to generate a new user message
+                        if "User:" in next_token_text:
+                            break
                         next_token_text = next_token_text.replace('\\n', '\n')
                         self.response_queue.put(("token", next_token_text))
                         generated_tokens.append(next_token_text)
@@ -2047,15 +2077,16 @@ class EntropixTGUI:
                         break
 
                 # Save generation output after successful generation
-                self.save_generation_output(prompt, generated_tokens, current_stats)
+                self.save_generation_output(conversation_history, generated_tokens, current_stats)
                 
         except Exception as e:
             error_msg = f"Generation error: {str(e)}"
             self.response_queue.put(("error", error_msg))
             logger.error(error_msg)
             
+            # Try to save partial output on error
             if generated_tokens:
-                self.save_generation_output(prompt, generated_tokens, current_stats)
+                self.save_generation_output(conversation_history, generated_tokens, current_stats)
 
 
     def get_current_config(self):
