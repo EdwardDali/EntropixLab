@@ -150,7 +150,6 @@ If you use this tool in your research, please cite:
 ```bibtex
 @software{entropix_text_generator,
   title = {Entropix Text Generator},
-  author = {Your Name},
   year = {2024},
   url = {(https://github.com/EdwardDali/EntropixLab)}
 }
