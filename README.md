@@ -152,7 +152,7 @@ If you use this tool in your research, please cite:
   title = {Entropix Text Generator},
   author = {Your Name},
   year = {2024},
-  url = {https://github.com/yourusername/entropix-text-generator}
+  url = {(https://github.com/EdwardDali/EntropixLab)}
 }
 ```
 
