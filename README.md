@@ -66,9 +66,9 @@ pip install -r requirements.txt
 
 ### GUI Interface
 
-Run the GUI application:
+Run the application:
 ```bash
-python gui.py
+python main.py
 ```
 
 The interface provides:
