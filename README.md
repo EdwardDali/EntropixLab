@@ -3,6 +3,8 @@
 ![GUI 1](https://github.com/EdwardDali/EntropixLab/blob/main_torch/docs/GUI1.PNG)
 ![GUI 2](https://github.com/EdwardDali/EntropixLab/blob/main_torch/docs/GUI2.PNG)
 
+kudos to the original implementation of concepts used in this tool. see their project here: https://github.com/xjdr-alt/entropix
+
 # Entropix Text Generator
 
 A sophisticated text generation tool with dynamic sampling strategies based on entropy and attention metrics. This project implements an advanced text generation interface that adapts its sampling approach based on real-time analysis of model outputs.
