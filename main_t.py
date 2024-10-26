@@ -9,6 +9,12 @@ import time
 from collections import Counter, deque
 import math
 import numpy as np
+from graphics import integrate_visualization
+import gc
+from tqdm import tqdm
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -975,91 +981,140 @@ class EntropixSampler:
             
         return confidences
 
-def generate_response(model, tokenizer, prompt: str, max_tokens: int = None) -> str:
-    """Generate response using the enhanced sampling strategy with fixed dimension handling"""
-    # Get model architecture parameters
-    n_layers = model.config.num_hidden_layers
-    n_heads = model.config.num_attention_heads
-    head_dim = model.config.hidden_size // n_heads
+def generate_response(model, tokenizer, prompt: str, max_tokens: int = None, viz_manager=None) -> str:
+    """Generate response with visualization support"""
+    # Create sampler config and sampler
+    sampler_config = SamplerConfig(tokenizer)  # Make sure this is imported
+    sampler = EntropixSampler(sampler_config)  # Make sure this is imported
     
-    # Initialize config with model-specific parameters
-    cfg = SamplerConfig(tokenizer)
-    cfg.head_dim = head_dim
-    cfg.n_heads = n_heads
-    cfg.n_layers = n_layers
-    
-    sampler = EntropixSampler(cfg)
-    
-    input_ids = tokenizer.encode(
-        prompt, 
-        return_tensors="pt", 
-        truncation=True, 
-        max_length=model.config.max_position_embeddings - max_tokens
+    inputs = tokenizer(
+        prompt,
+        return_tensors="pt",
+        truncation=True,
+        max_length=model.config.max_position_embeddings - 1000
     ).to(device)
     
+    input_ids = inputs["input_ids"]
     attention_mask = torch.ones_like(input_ids)
     
-    generated_text = ""
-    start_time = time.time()
+    max_tokens = max_tokens or 2048
+    generated_ids = input_ids.clone()
     
-    logger.info(f"Generating response for prompt: '{prompt}'")
-    logger.info(f"Model architecture: {n_layers} layers, {n_heads} heads, {head_dim} head dimension")
-    print("Generated text:", flush=True)
+    # Initialize tracking variables
+    token_log = []
+    entropies = []
+    varentropies = []
+    kl_divs = []
+    perplexities = []
+    hidden_states = []
+    time_steps = []
+    tokens = []
     
-    with torch.inference_mode():
-        for i in range(max_tokens):
+    logger.info(f"Starting generation for prompt of length {len(prompt)}")
+    
+    with torch.no_grad():
+        for step in range(max_tokens):
             outputs = model(
-                input_ids, 
-                attention_mask=attention_mask, 
-                output_attentions=True
+                generated_ids,
+                attention_mask=attention_mask,
+                output_attentions=True,
+                output_hidden_states=True
             )
             
-            logits = outputs.logits
-            attention_layers = outputs.attentions
-            last_layer_attention = attention_layers[-1].to(device)
+            logits = outputs.logits[:, -1, :].to(device)  # Get last token's logits
+            attention = outputs.attentions[-1].to(device)
+            
+            # Calculate metrics
+            entropy = calculate_entropy(logits)
+            varentropy = calculate_varentropy(entropy)
+            kl_div = calculate_kl_divergence(logits)
+            perplexity = calculate_perplexity(logits)
             
             try:
-                sampled_token, state = sampler.sample(logits, last_layer_attention)
-            except Exception as e:
-                logger.error(f"Error in sampling: {str(e)}")
-                logger.error(f"Attention shape: {last_layer_attention.shape}")
-                logger.error(f"Logits shape: {logits.shape}")
-                raise
-            
+                sampled_token, state = sampler.sample(logits, attention)
+            except Exception as sampling_error:
+                logger.error(f"Sampling error: {str(sampling_error)}")
+                break
+                
             if state == SamplerState.EOT or sampled_token[0] == tokenizer.eos_token_id:
                 break
             
-            # Updated COT insertion with more descriptive marker
-            if state == SamplerState.INSERT_COT and sampled_token[0] == cfg.cot_token:
-                next_token_text = "🤔[Let me think about this]"
-                print("\n" + next_token_text + "\n", end="", flush=True)
-            else:
-                next_token_text = tokenizer.decode(sampled_token[0])
-                print(next_token_text, end="", flush=True)
-                
-            generated_text += next_token_text
+            # Store metrics and states
+            entropies.append(entropy.item())
+            varentropies.append(varentropy.item())
+            kl_divs.append(kl_div.item())
+            perplexities.append(perplexity.item())
             
-            input_ids = torch.cat([input_ids, sampled_token.transpose(0, 1)], dim=-1)
+            # Get hidden states for visualization
+            if outputs.hidden_states:
+                last_hidden_state = outputs.hidden_states[-1][:, -1, :].to(device)
+                hidden_states.append(last_hidden_state.detach().cpu().numpy())
+            
+            # Store token info
+            token_text = tokenizer.decode(sampled_token[0])
+            tokens.append(token_text)
+            time_steps.append(step)
+            
+            # Log token details
+            token_log.append({
+                "token": token_text,
+                "entropy": entropy.item(),
+                "state": state.name
+            })
+            
+            # Update visualization if available
+            if viz_manager and len(hidden_states) > 0:
+                try:
+                    hidden_states_array = np.concatenate([hs for hs in hidden_states if hs.size > 0], axis=0)
+                    viz_manager.update(
+                        hidden_states=hidden_states_array,
+                        entropies=entropies,
+                        tokens=tokens,
+                        time_steps=time_steps
+                    )
+                except Exception as viz_error:
+                    logger.error(f"Visualization update error: {str(viz_error)}")
+            
+            # Update input ids and attention mask
+            generated_ids = torch.cat([generated_ids, sampled_token], dim=1)
             attention_mask = torch.cat([
-                attention_mask, 
+                attention_mask,
                 torch.ones((1, 1), dtype=torch.long, device=device)
             ], dim=1)
             
-            if input_ids.shape[1] >= model.config.max_position_embeddings:
+            # Check sequence length
+            if generated_ids.shape[1] >= model.config.max_position_embeddings:
                 logger.warning("Reached maximum sequence length. Stopping generation.")
                 break
     
-    total_time = time.time() - start_time
-    logger.info(f"Generation completed in {total_time:.2f} seconds")
+    # Decode the generated tokens
+    response = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
+    response = response.split("AI:")[-1].strip() if "AI:" in response else response
     
-    # Log statistics
-    total_tokens = sum(sampler.strategy_counter.values())
-    logger.info("\nToken Generation Strategy Distribution:")
-    for strategy, count in sampler.strategy_counter.items():
-        percentage = (count / total_tokens) * 100
-        logger.info(f"{strategy}: {count} ({percentage:.2f}%)")
+    # Store generation stats
+    generation_stats = {
+        'total_tokens': len(tokens),
+        'avg_entropy': np.mean(entropies) if entropies else 0,
+        'max_entropy': max(entropies) if entropies else 0,
+        'token_log': token_log
+    }
+    logger.info(f"Generation completed. Total tokens: {generation_stats['total_tokens']}")
     
-    return generated_text
+    # Store final generation data for GUI access
+    if hasattr(model, 'generation_data'):
+        model.generation_data = {
+            'hidden_states': np.concatenate(hidden_states, axis=0) if hidden_states else np.array([]),
+            'entropies': entropies,
+            'tokens': tokens,
+            'time_steps': time_steps,
+            'stats': generation_stats
+        }
+    
+    # Clear cache and collect garbage
+    torch.cuda.empty_cache()
+    gc.collect()
+    
+    return response
 
 # Add this helper function to diagnose attention shape issues
 def debug_attention_shape(attention_tensor: torch.Tensor, name: str = "attention"):
@@ -1072,7 +1127,7 @@ def debug_attention_shape(attention_tensor: torch.Tensor, name: str = "attention
                 f"mean: {attention_tensor.mean():.4f}, std: {attention_tensor.std():.4f}")
 
 def main():
-    """Main function to run the enhanced text generation"""
+    """Main function to run the enhanced text generation with visualization"""
     model_name = "Qwen/Qwen2.5-0.5B-Instruct"
     logger.info(f"Loading model and tokenizer: {model_name}")
     
@@ -1083,33 +1138,40 @@ def main():
         ).to(device)
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         tokenizer.pad_token = tokenizer.eos_token
+        
+        # Import visualization components
+        try:
+            from graphics import integrate_visualization
+            viz_enabled = True
+        except ImportError:
+            logger.warning("Visualization module not found, running without visualization")
+            viz_enabled = False
+            
+        if viz_enabled:
+            # This part will be handled by the main script now
+            logger.info("Visualization enabled - start from main script")
+        else:
+            # Console mode
+            print("Type 'quit' to exit the program.")
+            while True:
+                prompt = input("Enter your prompt (or 'quit' to exit): ").strip()
+                if prompt.lower() == 'quit':
+                    break
+                if not prompt:
+                    print("Please enter a non-empty prompt.")
+                    continue
+                
+                try:
+                    response = generate_response(model, tokenizer, prompt)
+                    print(f"\nPrompt: {prompt}")
+                    print(f"Generated response: {response}")
+                    print("\n" + "-"*50 + "\n")
+                except Exception as e:
+                    logger.error(f"Error during generation: {str(e)}")
+        
     except Exception as e:
         logger.error(f"Error loading model: {str(e)}")
         return
-    
-    print("Type 'quit' to exit the program.")
-    
-    while True:
-        prompt = input("Enter your prompt (or 'quit' to exit): ").strip()
-        if prompt.lower() == 'quit':
-            break
-        if not prompt:
-            print("Please enter a non-empty prompt.")
-            continue
-        
-        try:
-            response = generate_response(model, tokenizer, prompt)
-            print(f"\nPrompt: {prompt}")
-            print(f"Generated response: {response}")
-            print("\n" + "-"*50 + "\n")
-            
-            with open("generated_response.txt", "w", encoding="utf-8") as file:
-                file.write(f"Prompt: {prompt}\n\nGenerated response: {response}")
-            print("Response saved to generated_response.txt")
-        except Exception as e:
-            logger.error(f"Error during generation: {str(e)}")
-    
-    print("Thank you for using the AI assistant. Goodbye!")
 
 if __name__ == "__main__":
     main()

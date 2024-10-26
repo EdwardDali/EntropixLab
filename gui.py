@@ -15,6 +15,10 @@ from pathlib import Path
 from datetime import datetime
 import json
 import hashlib
+import numpy as np
+import gc
+
+logger = logging.getLogger(__name__)
 
 # Import from main_t
 from main_t import (
@@ -427,6 +431,10 @@ class EntropixTGUI:
         self.current_model_hash = None
         self.current_model_name = None
 
+        # Add visualization manager placeholder
+        self.viz_manager = None
+        
+        
     def create_widgets(self):
         """Create and setup all GUI widgets"""
         # Create main tab
@@ -2037,13 +2045,29 @@ class EntropixTGUI:
             self.strategy_stats.configure(state="disabled")
 
     def generate_text(self, conversation_history: str, is_continuation: bool = False):
-        """Generate text with conversation history and continuation support"""
+        """Generate text with visualization support"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        generated_tokens = []
-        current_stats = {}
+        
+        # Initialize storage for visualization data
+        self.hidden_states = []
+        self.entropies = []
+        self.tokens = []
+        self.time_steps = []
+        
+        # Initialize tracking variables
+        self.generation_stats = {
+            'token_count': 0,
+            'current_strategy': None,
+            'strategies_used': {}
+        }
         
         try:
-            # Encode full conversation history with proper truncation
+            # Check model and tokenizer
+            if not self.model or not self.tokenizer:
+                self.response_queue.put(("error", "Model or tokenizer not initialized"))
+                return
+                
+            # Encode the conversation history
             input_ids = self.tokenizer.encode(
                 conversation_history,
                 return_tensors="pt",
@@ -2051,24 +2075,26 @@ class EntropixTGUI:
                 max_length=self.model.config.max_position_embeddings - 1000
             ).to(device)
             
-            attention_mask = torch.ones_like(input_ids)
-            
-            # Only show the initial prompt formatting if this is not a continuation
+            # Only show initial prompt formatting if not continuing
             if not is_continuation and not "\nUser:" in conversation_history:
                 formatted_prompt = conversation_history.replace('\\n', '\n')
                 self.response_queue.put(("token", f"Prompt: {formatted_prompt}\n\nGenerated response:\n"))
             
+            # Initialize sampler with current config
+            self.update_config()  # Ensure config is up to date
             sampler = EntropixSampler(self.sampler_config)
             
             with torch.inference_mode():
-                for _ in range(1000):  # Max tokens per response
+                for step in range(1000):  # Max tokens per response
                     if self.stop_generation:
+                        logger.info("Generation stopped by user")
                         break
                     
                     outputs = self.model(
                         input_ids,
-                        attention_mask=attention_mask,
-                        output_attentions=True
+                        attention_mask=torch.ones_like(input_ids),
+                        output_attentions=True,
+                        output_hidden_states=True
                     )
                     
                     logits = outputs.logits
@@ -2078,7 +2104,22 @@ class EntropixTGUI:
                         sampled_token, state = sampler.sample(logits, attention)
                         current_stats = sampler.calculate_metrics(logits, attention)
                         current_stats['current_strategy'] = state.name
+                        
+                        # Update statistics
+                        self.generation_stats['token_count'] += 1
+                        self.generation_stats['current_strategy'] = state.name
+                        self.generation_stats['strategies_used'][state.name] = \
+                            self.generation_stats['strategies_used'].get(state.name, 0) + 1
+                        
                         self.response_queue.put(("stats", current_stats))
+                        
+                        # Store data for visualization
+                        if outputs.hidden_states:
+                            last_hidden_state = outputs.hidden_states[-1][:, -1, :].detach().cpu().numpy()
+                            self.hidden_states.append(last_hidden_state)
+                            self.entropies.append(current_stats['logits_entropy'])
+                            self.tokens.append(self.tokenizer.decode(sampled_token[0]))
+                            self.time_steps.append(step)
                         
                         # Strategy tracking
                         if state == SamplerState.INSERT_COT:
@@ -2088,51 +2129,63 @@ class EntropixTGUI:
                             self.response_queue.put(("strategy", state.name))
                         
                     except Exception as sampling_error:
+                        logger.error(f"Sampling error: {str(sampling_error)}")
                         self.response_queue.put(("error", f"Sampling error: {str(sampling_error)}"))
                         break
-
-                    # Check for end of response conditions
+                    
+                    # Check for end conditions
                     if state == SamplerState.EOT or sampled_token[0] == self.tokenizer.eos_token_id:
                         self.response_queue.put(("token", "\n[End of Text]\n"))
-                        generated_tokens.append("[End of Text]")
                         break
                     
                     # Handle token generation
                     if state == SamplerState.INSERT_COT and sampled_token[0] == self.sampler_config.cot_token:
                         next_token_text = "[...]"
                         self.response_queue.put(("token", f"\n{next_token_text}\n"))
-                        generated_tokens.append(next_token_text)
                     else:
                         next_token_text = self.tokenizer.decode(sampled_token[0])
-                        # Check for conversation boundary - stop if model tries to generate a new user message
-                        if "User:" in next_token_text:
+                        if "User:" in next_token_text:  # Stop if model tries to generate user message
                             break
                         next_token_text = next_token_text.replace('\\n', '\n')
                         self.response_queue.put(("token", next_token_text))
-                        generated_tokens.append(next_token_text)
                     
-                    input_ids = torch.cat([input_ids, sampled_token], dim=-1)
-                    attention_mask = torch.cat([
-                        attention_mask,
-                        torch.ones((1, 1), dtype=torch.long, device=device)
-                    ], dim=1)
+                    # Update input sequence
+                    input_ids = torch.cat([input_ids, sampled_token], dim=1)
                     
+                    # Check sequence length
                     if input_ids.shape[1] >= self.model.config.max_position_embeddings:
                         self.response_queue.put(("token", "\n[Reached maximum sequence length]\n"))
-                        generated_tokens.append("[Reached maximum sequence length]")
                         break
-
-                # Save generation output after successful generation
-                self.save_generation_output(conversation_history, generated_tokens, current_stats)
+            
+            # Convert hidden states to numpy array if we have any
+            if self.hidden_states:
+                self.hidden_states = np.concatenate(self.hidden_states, axis=0)
                 
+            # Update visualization if manager exists
+            if hasattr(self, 'viz_manager') and self.viz_manager:
+                try:
+                    self.viz_manager.update(
+                        hidden_states=self.hidden_states,
+                        entropies=self.entropies,
+                        tokens=self.tokens,
+                        time_steps=self.time_steps
+                    )
+                except Exception as viz_error:
+                    logger.error(f"Visualization update error: {str(viz_error)}")
+            
+            # Log generation statistics
+            logger.info(f"Generation completed. Tokens generated: {self.generation_stats['token_count']}")
+            logger.info(f"Strategies used: {self.generation_stats['strategies_used']}")
+                    
         except Exception as e:
             error_msg = f"Generation error: {str(e)}"
             self.response_queue.put(("error", error_msg))
             logger.error(error_msg)
             
-            # Try to save partial output on error
-            if generated_tokens:
-                self.save_generation_output(conversation_history, generated_tokens, current_stats)
+        finally:
+            # Clean up resources
+            torch.cuda.empty_cache()
+            gc.collect()
 
 
     def get_current_config(self):
