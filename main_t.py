@@ -69,11 +69,11 @@ class AttnStats(NamedTuple):
 
     def update(self, attention: torch.Tensor, layer_idx: int) -> 'AttnStats':
         """Update statistics with proper dimension handling"""
-        attention_probs = F.softmax(attention, dim=-1)
+        # Use attention scores directly - they're already normalized
         
         # Calculate entropy per head
         entropy = -torch.sum(
-            attention_probs * torch.log2(torch.clamp(attention_probs, min=1e-10)),
+            attention * torch.log2(torch.clamp(attention, min=1e-10)),
             dim=-1
         ).mean(dim=-1)  # Average over sequence length
         
@@ -502,9 +502,9 @@ class EntropixSampler:
 
     def calculate_attention_entropy(self, attention: torch.Tensor) -> torch.Tensor:
         """Calculate attention entropy with fixed dimension handling"""
-        attention_probs = F.softmax(attention, dim=-1)
+        # Use attention scores directly
         entropy = -torch.sum(
-            attention_probs * torch.log2(torch.clamp(attention_probs, min=1e-10)),
+            attention * torch.log2(torch.clamp(attention, min=1e-10)),
             dim=-1
         )
         return entropy.mean(dim=1)  # Average over batch dimension, preserving head dimension
@@ -519,16 +519,16 @@ class EntropixSampler:
 
     def calculate_agreement(self, attention: torch.Tensor) -> torch.Tensor:
         """Calculate agreement between attention heads"""
-        attention_probs = F.softmax(attention, dim=-1)
-        mean_attention = attention_probs.mean(dim=1, keepdim=True)
-        head_agreement = 1 - torch.abs(attention_probs - mean_attention).mean()
+        # Use attention scores directly
+        mean_attention = attention.mean(dim=1, keepdim=True)
+        head_agreement = 1 - torch.abs(attention - mean_attention).mean()
         return head_agreement
 
     def calculate_interaction_strength(self, attention: torch.Tensor) -> torch.Tensor:
         """Calculate interaction strength between attention heads"""
-        attention_probs = F.softmax(attention, dim=-1)
-        batch_size, num_heads, seq_len, _ = attention_probs.shape
-        attention_flat = attention_probs.view(batch_size, num_heads, -1)
+        # Use attention scores directly
+        batch_size, num_heads, seq_len, _ = attention.shape
+        attention_flat = attention.view(batch_size, num_heads, -1)
         norm = torch.norm(attention_flat, dim=2, keepdim=True)
         normalized = attention_flat / (norm + 1e-8)
         interaction = torch.matmul(normalized, normalized.transpose(-1, -2))
